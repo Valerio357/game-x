@@ -1,0 +1,19 @@
+# SwiftPM
+.build/
+.swiftpm/
+dist/
+
+# macOS
+.DS_Store
+
+# Game-X locale
+*.log
+
+# file locali non tracciati
+game-cross.png
+
+# icona: iconset intermedio
+Resources/AppIcon.iconset/
+
+# pi runtime
+.pi/

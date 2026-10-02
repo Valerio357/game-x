@@ -1,0 +1,23 @@
+# Game-X — configurazione
+# Copia in ~/.config/game-x/config.toml e adatta i valori.
+# Precedenza: flag CLI → variabili GX_* → questo file → default.
+
+[runtime]
+gptk_app    = "/Applications/Game Porting Toolkit.app"
+wine_binary = ""              # vuoto = auto-discovery (GPTK → Wine Staging → Homebrew)
+winetricks  = "/opt/homebrew/bin/winetricks"
+arch        = "win64"
+
+[paths]
+prefix_root = "~/WinePrefixes"
+games_root  = "~/Library/Application Support/game-x/games"
+logs_root   = "~/Library/Logs/game-x"
+cache_root  = "~/Library/Caches/game-x"
+
+[steam]
+default_prefix    = "SteamStaging"
+webhelper_wrapper = "auto"    # auto | on | off
+
+[launch]
+esync = true
+msync = false

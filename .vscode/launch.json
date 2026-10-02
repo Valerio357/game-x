@@ -1,0 +1,64 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:game-x}",
+            "name": "Debug gx",
+            "target": "gx",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug gx"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:game-x}",
+            "name": "Release gx",
+            "target": "gx",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release gx"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:game-x}",
+            "name": "Debug gx-selftest",
+            "target": "gx-selftest",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug gx-selftest"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:game-x}",
+            "name": "Release gx-selftest",
+            "target": "gx-selftest",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release gx-selftest"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:game-x}",
+            "name": "Debug GameX",
+            "target": "GameX",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug GameX"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:game-x}",
+            "name": "Release GameX",
+            "target": "GameX",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release GameX"
+        }
+    ]
+}
