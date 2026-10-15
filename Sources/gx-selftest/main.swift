@@ -70,6 +70,103 @@ do {
     h.check(new.supportsModernSteam == true, "wine 11 supports modern Steam")
 }
 
+print("DXMF runtime")
+do {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("gx-dxmf-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: root) }
+
+    // Host finto: `bin/wine` eseguibile ma MAI eseguito. La versione dell'host
+    // è dichiarata accanto all'host, così la scoperta non invoca Wine (isolamento).
+    func makeHost(_ name: String, declared: String) -> URL {
+        let host = root.appendingPathComponent(name)
+        try? fm.createDirectory(at: host.appendingPathComponent("bin"),
+                                withIntermediateDirectories: true)
+        let wine = host.appendingPathComponent("bin/wine")
+        try? Data([0x7f, 0x45, 0x4c, 0x46]).write(to: wine)
+        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wine.path)
+        try? "{\"wineVersion\":\"\(declared)\"}".write(
+            to: host.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+        return host
+    }
+
+    // Stage finto: d3d11 + dxgi (PE + unix), con pin 11.10 dichiarato.
+    let stage = root.appendingPathComponent("game-stage/wine")
+    for module in ["d3d11", "dxgi"] {
+        for (dir, ext) in [("x86_64-windows", "dll"), ("x86_64-unix", "so")] {
+            let file = stage.appendingPathComponent("\(dir)/\(module).\(ext)")
+            try? fm.createDirectory(at: file.deletingLastPathComponent(),
+                                    withIntermediateDirectories: true)
+            try? Data([0x7f, 0x45, 0x4c, 0x46]).write(to: file)
+        }
+    }
+    try? "{\"pinnedVersion\":\"11.10\"}".write(
+        to: stage.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+
+    let host = makeHost("wine-d3dmetal", declared: "wine-11.10")
+    let cfg = Config(dxmfWineRoot: host.path, dxmfStage: stage.path)
+    guard let info = DXMF.discover(config: cfg) else {
+        h.check(false, "dxmf discover finds host + stage")
+        exit(h.finish())
+    }
+    h.check(info.isUsable, "dxmf runtime usable")
+    h.check(info.unusableReason == nil, "usable → nil reason")
+    h.equal(info.wineVersion, "wine-11.10", "host wine version")
+    h.equal(info.modules, ["d3d11", "dxgi"], "modules from the stage")
+    h.equal(info.pinnedVersion, "11.10", "pin from the stage manifest")
+    h.check(info.versionMismatch == nil, "matching versions → no mismatch")
+    h.equal(DXMF.moduleFiles(for: info).count, 2, "moduleFiles pairing")
+    let pair = DXMF.moduleFiles(for: info).first { $0.name == "d3d11" }
+    h.equal(pair?.pe.path, stage.appendingPathComponent("x86_64-windows/d3d11.dll").path,
+            "PE path d3d11")
+    h.equal(pair?.unix.path, stage.appendingPathComponent("x86_64-unix/d3d11.so").path,
+            "unix path d3d11")
+
+    // environment esatto, default (quiet = true, nessun frame log / lock).
+    let env = DXMF.environment(for: info, diagnostics: DXMF.Diagnostics())
+    h.equal(env["WINEDLLPATH_PREPEND"], stage.path, "WINEDLLPATH_PREPEND = stage")
+    h.equal(env["WINEDLLOVERRIDES"], "d3d9,d3d11,dxgi=b", "WINEDLLOVERRIDES base")
+    h.equal(env["DXMF_DIAG_QUIET"], "1", "DXMF_DIAG_QUIET default 1")
+    h.check(env["DXMF_FRAME_TIME"] == nil, "no frame log by default")
+    h.check(env["DXMF_LOCK_DIR"] == nil, "no lock dir by default")
+    h.check(env["DXMF_GATE_LOCK_WAIT"] == nil, "no gate wait by default")
+
+    // frame log / lock dir / gate wait esposti.
+    let diag = DXMF.Diagnostics(quiet: false,
+                                frameLog: URL(fileURLWithPath: "/tmp/gx-frame.log"),
+                                lockDir: "/tmp/gx-locks",
+                                gateLockWait: 300)
+    let env2 = DXMF.environment(for: info, diagnostics: diag)
+    h.equal(env2["DXMF_FRAME_TIME"], "/tmp/gx-frame.log", "DXMF_FRAME_TIME")
+    h.equal(env2["DXMF_LOCK_DIR"], "/tmp/gx-locks", "DXMF_LOCK_DIR")
+    h.equal(env2["DXMF_GATE_LOCK_WAIT"], "300", "DXMF_GATE_LOCK_WAIT")
+    h.check(env2["DXMF_DIAG_QUIET"] == nil, "not quiet → no DXMF_DIAG_QUIET")
+
+    // extra applicato per ultimo e vince.
+    let env3 = DXMF.environment(for: info, diagnostics: DXMF.Diagnostics(),
+                                extra: ["WINEDLLPATH_PREPEND": "/override"])
+    h.equal(env3["WINEDLLPATH_PREPEND"], "/override", "extra wins")
+
+    // Il muro: host wine-7.7 con pin 11.10 → mismatch nominato + non usabile.
+    let oldHost = makeHost("wine-gptk-77", declared: "wine-7.7")
+    let oldCfg = Config(dxmfWineRoot: oldHost.path, dxmfStage: stage.path)
+    guard let old = DXMF.discover(config: oldCfg) else {
+        h.check(false, "dxmf discover finds the old host")
+        exit(h.finish())
+    }
+    h.check(old.versionMismatch != nil, "wine-7.7 vs pin 11.10 → mismatch")
+    h.check(old.isUsable == false, "wine-7.7 host is not usable")
+    h.check(old.unusableReason != nil, "unusable reason is named")
+    h.check((old.versionMismatch ?? "").contains("wine-7.7"), "mismatch names host version")
+    h.check((old.versionMismatch ?? "").contains("11.10"), "mismatch names pinned version")
+
+    // Uno stage senza moduli completi non è uno stage.
+    let emptyStage = root.appendingPathComponent("empty-stage")
+    try? fm.createDirectory(at: emptyStage.appendingPathComponent("x86_64-windows"),
+                            withIntermediateDirectories: true)
+    h.check(DXMF.discoverStage(root: emptyStage) == nil, "incomplete stage → nil")
+}
+
 print("Game registry")
 do {
     let root = FileManager.default.temporaryDirectory
