@@ -19,6 +19,9 @@ public enum Steam {
         case setupFailed(Int32)
         case updateTimeout(Int)
         case runtimeTooOld(String)
+        case appNotInstalled(String)
+        case gameExecutableNotFound(String)
+        case gameExecutableAmbiguous(String, [String])
 
         public var description: String {
             switch self {
@@ -27,6 +30,15 @@ public enum Steam {
             case .setupFailed(let c): return "SteamSetup.exe exited with code \(c)"
             case .updateTimeout(let s): return "timed out waiting for the Steam update (\(s)s)"
             case .runtimeTooOld(let v): return "Wine runtime too old for Steam (\(v)); Wine >= 8 required (use Wine Staging)"
+            case .appNotInstalled(let id):
+                return "appid \(id) is not installed in this box (no appmanifest_\(id).acf); install it in Steam first"
+            case .gameExecutableNotFound(let id):
+                return "appid \(id) is installed but no game executable was found in its install directory; "
+                    + "launch it with `gx dxmf run <box> -- <exe>`"
+            case .gameExecutableAmbiguous(let id, let paths):
+                return "appid \(id) has \(paths.count) candidate executables; refusing to guess:\n  "
+                    + paths.joined(separator: "\n  ")
+                    + "\nlaunch one explicitly with `gx dxmf run <box> -- <exe>`"
             }
         }
     }
@@ -34,6 +46,59 @@ public enum Steam {
     public static func status(in prefix: PrefixRecord) -> Status {
         guard prefix.hasSteam else { return .notInstalled }
         return .installed(shimInstalled: Shim.isInstalled(in: prefix))
+    }
+
+    // MARK: - Environment (Steam never carries the dxmf contract)
+
+    /// Ambiente per i processi **Steam** (installer, update, UI, `wineserver -k`):
+    /// base del prefix con il contratto dxmf **rimosso**. La UI di Steam compone
+    /// in D3D11 via dxvk: con i moduli dxmf diventa **nera**. Il contratto dxmf si
+    /// applica **solo** al processo del gioco (`Prefix.dxmfLaunchEnvironment`).
+    public static func steamEnvironment(
+        config: Config, prefix: PrefixRecord, runtime: ResolvedRuntime
+    ) -> [String: String] {
+        let base = Prefix.baseEnvironment(config: config, prefix: prefix.url, runtime: runtime)
+        let modules = runtime.dxmf.map {
+            Set(DXMF.baseOverrideModules).union($0.modules)
+        } ?? []
+        return strippingDXMFContract(base, dxmfModules: modules)
+    }
+
+    /// Rimuove da un ambiente ogni traccia del contratto dxmf:
+    /// `WINEDLLPATH_PREPEND`, i `DXMF_*` e i moduli dxmf da `WINEDLLOVERRIDES`
+    /// (restano gli override del prefix, cioè dxvk). Pura e testabile.
+    public static func strippingDXMFContract(
+        _ env: [String: String], dxmfModules: Set<String>
+    ) -> [String: String] {
+        var out = env
+        out.removeValue(forKey: "WINEDLLPATH_PREPEND")
+        for key in ["DXMF_DIAG_QUIET", "DXMF_FRAME_TIME", "DXMF_LOCK_DIR", "DXMF_GATE_LOCK_WAIT"] {
+            out.removeValue(forKey: key)
+        }
+        if let overrides = out["WINEDLLOVERRIDES"] {
+            let cleaned = removingDLLOverrides(dxmfModules, from: overrides)
+            if cleaned.isEmpty { out.removeValue(forKey: "WINEDLLOVERRIDES") }
+            else { out["WINEDLLOVERRIDES"] = cleaned }
+        }
+        return out
+    }
+
+    /// Toglie da `WINEDLLOVERRIDES` le voci dei moduli indicati, preservando
+    /// gruppi e altri override.
+    static func removingDLLOverrides(_ modules: Set<String>, from overrides: String) -> String {
+        let groups = overrides.split(separator: ";", omittingEmptySubsequences: false)
+        var keptGroups: [String] = []
+        for group in groups {
+            let entries = group.split(separator: ",", omittingEmptySubsequences: false)
+            let kept = entries.filter { entry in
+                let name = entry.split(separator: "=", maxSplits: 1).first.map(String.init)
+                    ?? String(entry)
+                return !modules.contains(name.trimmingCharacters(in: .whitespaces))
+            }
+            let joined = kept.joined(separator: ",")
+            if !joined.isEmpty { keptGroups.append(joined) }
+        }
+        return keptGroups.joined(separator: ";")
     }
 
     // MARK: - Install (online)
@@ -56,6 +121,7 @@ public enum Steam {
         force: Bool = false,
         progress: (String) -> Void = { _ in }
     ) throws -> String {
+        try Prefix.refuseIfLocked(box: prefix.name, config: config)
         guard runtime.supportsModernSteam else { throw SteamError.runtimeTooOld(runtime.version) }
         guard prefix.isInitialized else {
             throw SteamError.notInstalled("prefix not initialized: \(prefix.name)")
@@ -72,7 +138,7 @@ public enum Steam {
         // 1) bootstrapper
         if let setup = try resolveSetup(setupPath: setupPath, download: setupDownload) {
             progress("Eseguo \(setup.lastPathComponent) /S…")
-            var env = Prefix.baseEnvironment(config: config, prefix: prefix.url, runtime: runtime)
+            var env = steamEnvironment(config: config, prefix: prefix, runtime: runtime)
             env["WINEARCH"] = config.arch
             let result = try ProcessRunner.run(runtime.wineBinary, [setup.path, "/S"], environment: env)
             guard result.success else { throw SteamError.setupFailed(result.exitCode) }
@@ -104,7 +170,7 @@ public enum Steam {
         timeout: Int,
         progress: (String) -> Void
     ) throws {
-        var env = Prefix.baseEnvironment(config: config, prefix: prefix.url, runtime: runtime)
+        var env = steamEnvironment(config: config, prefix: prefix, runtime: runtime)
         if config.esync { env["WINEESYNC"] = "1" }
 
         progress("Starting Steam for the first client download…")
@@ -170,6 +236,7 @@ public enum Steam {
         runtime: ResolvedRuntime,
         force: Bool = true
     ) throws -> String {
+        try Prefix.refuseIfLocked(box: prefix.name, config: config)
         guard prefix.hasSteam else { throw SteamError.notInstalled(prefix.name) }
         try Shim.ensureInstalled(in: prefix, config: config, force: force)
         Prefix.updateMetaKind(prefix, kind: .steam, runtime: runtime)
@@ -207,6 +274,7 @@ public enum Steam {
         runtime: ResolvedRuntime,
         progress: (String) -> Void = { _ in }
     ) throws -> ProcessResult {
+        try Prefix.refuseIfLocked(box: prefix.name, config: config)
         guard prefix.hasSteam else { throw ProcessError.executableNotFound(prefix.steamExe.path) }
         guard runtime.supportsModernSteam else {
             throw ProcessError.launchFailed(
@@ -236,7 +304,7 @@ public enum Steam {
             }
         }
 
-        var env = Prefix.baseEnvironment(config: config, prefix: prefix.url, runtime: runtime)
+        var env = steamEnvironment(config: config, prefix: prefix, runtime: runtime)
         if config.esync { env["WINEESYNC"] = "1" }
         let webhelper = prefix.driveC
             .appendingPathComponent("Program Files (x86)/Steam/bin/cef/cef.win64/steamwebhelper.exe")
@@ -274,9 +342,33 @@ public enum Steam {
         prefix: PrefixRecord,
         config: Config,
         runtime: ResolvedRuntime,
+        exe: URL? = nil,
         warmupIfCold: Bool = true,
         progress: (String) -> Void = { _ in }
     ) throws -> ProcessResult {
+        try Prefix.refuseIfLocked(box: prefix.name, config: config)
+
+        // Runtime dxmf: il gioco deve nascere con il **nostro** ambiente. Un
+        // `-applaunch` fa nascere il gioco dal processo Steam già avviato, che
+        // non ha il contratto dxmf: risolviamo l'exe e lo lanciamo direttamente
+        // (pattern provato da `dxmf/scripts/app-probe.sh`).
+        if let info = runtime.dxmf {
+            let gameExe: URL
+            if let exe {
+                gameExe = exe
+            } else {
+                gameExe = try resolveGameExecutable(appid: appid, prefix: prefix)
+            }
+            progress("dxmf: resolved game executable: \(gameExe.path)")
+            let env = Prefix.dxmfLaunchEnvironment(
+                config: config,
+                prefix: prefix.url,
+                info: info,
+                diagnostics: dxmfDiagnostics(from: config),
+                extra: ["SteamAppId": appid, "SteamGameId": appid])
+            return try ProcessRunner.run(runtime.wineBinary, [gameExe.path], environment: env)
+        }
+
         if let info = runtime.dxmt {
             let cold = !DXMT.isWarmed(appid: appid, for: info)
                 || DXMT.cacheGrewSinceWarmup(appid: appid, for: info)
@@ -297,9 +389,120 @@ public enum Steam {
         )
     }
 
-    /// Termina i processi del prefix.
-    public static func stop(prefix: PrefixRecord, runtime: ResolvedRuntime) {
+    /// Termina i processi del prefix. Rispetta il lock: se un mutatore è dentro,
+    /// non uccide (rifiuto consapevole, dichiarato nel log); `BoxLock` resta la
+    /// fonte unica.
+    public static func stop(prefix: PrefixRecord, config: Config = Config(), runtime: ResolvedRuntime) {
+        if case .held(let info) = BoxLock.state(box: prefix.name, config: config) {
+            Log.shared.warn("Steam.stop refused for box '\(prefix.name)': \(info)")
+            return
+        }
         Prefix.kill(prefix, runtime: runtime)
+    }
+
+    // MARK: - Game executable resolution (dxmf)
+
+    /// Risolve l'eseguibile del gioco dai metadati Steam dell'installazione:
+    /// `steamapps/appmanifest_<appid>.acf` → `installdir`, più le librerie
+    /// elencate da `libraryfolders.vdf`.
+    ///
+    /// Regole (nessun indovinello): candidati = gli `.exe` **direttamente**
+    /// dentro `steamapps/common/<installdir>`; uno solo → lo si usa; più di uno
+    /// → si rifiuta elencandoli; nessuno → si rifiuta per nome. Un `--exe`
+    /// esplicito (parametro `exe` di `launch`) vince sempre e non passa di qui.
+    public static func resolveGameExecutable(appid: String, prefix: PrefixRecord) throws -> URL {
+        let fm = FileManager.default
+        let steamapps = prefix.driveC
+            .appendingPathComponent("Program Files (x86)/Steam/steamapps")
+
+        var steamappsDirs: [URL] = [steamapps]
+        let vdf = steamapps.appendingPathComponent("libraryfolders.vdf")
+        if let text = try? String(contentsOf: vdf, encoding: .utf8) {
+            for raw in libraryPaths(in: text) {
+                guard let unix = unixPath(forWindowsPath: raw, prefix: prefix) else { continue }
+                let sa = URL(fileURLWithPath: unix).appendingPathComponent("steamapps")
+                if !steamappsDirs.contains(where: { $0.standardizedFileURL == sa.standardizedFileURL }) {
+                    steamappsDirs.append(sa)
+                }
+            }
+        }
+
+        var installDirs: [URL] = []
+        for sa in steamappsDirs {
+            let acf = sa.appendingPathComponent("appmanifest_\(appid).acf")
+            guard let text = try? String(contentsOf: acf, encoding: .utf8),
+                  let installdir = firstQuotedValue("installdir", in: text),
+                  !installdir.isEmpty else { continue }
+            let dir = sa.appendingPathComponent("common").appendingPathComponent(installdir)
+            if fm.fileExists(atPath: dir.path) { installDirs.append(dir) }
+        }
+        guard !installDirs.isEmpty else { throw SteamError.appNotInstalled(appid) }
+
+        var candidates: [URL] = []
+        for dir in installDirs {
+            guard let entries = try? fm.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: nil) else { continue }
+            for entry in entries where entry.pathExtension.lowercased() == "exe" {
+                if !candidates.contains(where: { $0.standardizedFileURL == entry.standardizedFileURL }) {
+                    candidates.append(entry)
+                }
+            }
+        }
+        candidates.sort { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        switch candidates.count {
+        case 0: throw SteamError.gameExecutableNotFound(appid)
+        case 1: return candidates[0]
+        default: throw SteamError.gameExecutableAmbiguous(appid, candidates.map { $0.path })
+        }
+    }
+
+    /// Le librerie elencate da `libraryfolders.vdf` (formato moderno `"path"` e
+    /// quello vecchio `"1" "D:\\…"`).
+    static func libraryPaths(in vdf: String) -> [String] {
+        var paths: [String] = []
+        for pattern in ["\"path\"\\s+\"([^\"]*)\"", "\"\\d+\"\\s+\"([A-Za-z]:[^\"]*)\""] {
+            guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
+            for match in re.matches(in: vdf, range: NSRange(vdf.startIndex..., in: vdf)) {
+                guard match.numberOfRanges > 1,
+                      let range = Range(match.range(at: 1), in: vdf) else { continue }
+                paths.append(String(vdf[range]))
+            }
+        }
+        return paths
+    }
+
+    /// `C:\\Program Files (x86)\\Steam` → `<prefix>/drive_c/Program Files (x86)/Steam`.
+    static func unixPath(forWindowsPath win: String, prefix: PrefixRecord) -> String? {
+        var normalized = win.replacingOccurrences(of: "\\", with: "/")
+        while normalized.contains("//") {
+            normalized = normalized.replacingOccurrences(of: "//", with: "/")
+        }
+        let chars = Array(normalized)
+        guard chars.count >= 2, chars[1] == ":" else { return nil }
+        let drive = String(chars[0]).lowercased()
+        let rest = String(normalized.dropFirst(2))
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let root = prefix.url.appendingPathComponent("drive_\(drive)")
+        return rest.isEmpty ? root.path : root.appendingPathComponent(rest).path
+    }
+
+    static func firstQuotedValue(_ key: String, in text: String) -> String? {
+        guard let re = try? NSRegularExpression(pattern: "\"\(key)\"\\s+\"([^\"]*)\""),
+              let match = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              match.numberOfRanges > 1, let range = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        return String(text[range])
+    }
+
+    /// Diagnostica dxmf derivata dalla `Config` (il `--frame-log` è un flag CLI e
+    /// resta `nil` qui: l'avvio diretto non ha un frame log).
+    static func dxmfDiagnostics(from config: Config) -> DXMF.Diagnostics {
+        DXMF.Diagnostics(
+            quiet: true,
+            frameLog: nil,
+            lockDir: config.dxmfLockDir.isEmpty ? nil : config.dxmfLockDir,
+            gateLockWait: config.dxmfGateLockWait > 0 ? config.dxmfGateLockWait : nil)
     }
 
     // MARK: - Warm-up shader
