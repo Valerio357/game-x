@@ -647,4 +647,7 @@ runHygieneChecks(h)
 // Steam su dxvk + gioco su dxmf, risoluzione dell'exe.
 runPrefixChecks(h)
 
+// F003: il tetto di log (LaunchLog).
+runLogChecks(h)
+
 exit(h.finish())

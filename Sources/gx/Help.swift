@@ -23,10 +23,13 @@ enum Help {
           gx runtime mono            Ensure wine-mono is installed in the boxes
 
         \(Out.bold("BOXES"))
-          gx box list [--trash]
-          gx box create <name> [--runtime wine-gptk|dxmt|staging|gptk|homebrew|<path>] [--force]
-                                 (default runtime: wine-gptk = Wine+D3DMetal)
-          gx box info <name>
+          gx box list [--trash]                 (a box with a live lock is tagged (locked))
+          gx box create <name> [--runtime wine-gptk|dxmf|dxmt|staging|gptk|homebrew|<path>] [--force]
+                                 (default runtime: wine-gptk = Wine+D3DMetal;
+                                  `--runtime dxmf` uses the patched host + the dxmf stage
+                                  and refuses a host whose version does not match the
+                                  modules, unless --force)
+          gx box info <name>                    (prints the live/stale lock when present)
           gx box remove <name> --yes [--purge]
           gx box purge <entry> | --all
           gx box exec <name> [--runtime ...] -- <cmd...>   run any Windows program
@@ -34,6 +37,29 @@ enum Help {
           gx box kill <name>
           gx box open <name>
           (alias: gx prefix ...)
+          Mutating box commands take the per-box lock; --lock-wait SEC waits for it
+          and --force breaks a live lock (naming the holder: pid, age, command, reason).
+
+        \(Out.bold("DXMF"))   (run a game under the dxmf D3D11/D3D9 modules)
+          gx dxmf status [box]                  host+version, stage+modules, version pin+source,
+                                                host capabilities, resolved deps folder and which
+                                                of freetype/MoltenVK/gnutls it provides, default
+                                                log cap, winedbg orphan count, and the box lock
+                                                (exit 0 only if the modules load)
+          gx dxmf modules [box]                 each module's PE and unix path + sha256
+                                                (content proof for lsof)
+          gx dxmf run <box> [flags] -- <cmd...> launch a game with the dxmf environment:
+                                     --appid N          set SteamAppId/SteamGameId
+                                     --winedebug SPEC   WINEDEBUG=SPEC (requires a finite log cap)
+                                     --max-log-mb N     log cap in MB (default 512; 0 = unlimited,
+                                                        with a loud warning; measured with du)
+                                     --frame-log FILE   DXMF_FRAME_TIME (diagnostics, off by default)
+                                     --lock-wait SEC    wait for the box lock
+                                     --force            break a live lock / run when crowded
+                                     --sweep            kill winedbg --auto orphans first
+                                     --dry-run          print the plan and the environment, do not launch
+                                     --verbose|--debug  turn dxmf diagnostics on (default: quiet)
+                                     (without `--` the args after the box are the command)
 
         \(Out.bold("DEPENDENCIES"))
           gx deps list
@@ -46,10 +72,14 @@ enum Help {
           gx steam install [box] [--setup <path>] [--runtime ...] [--force] [--no-update]
           gx steam repair  [box] [--runtime ...]
           gx steam run     [box]
-          gx steam launch  <box> <appid>
+          gx steam launch  <box> <appid> [--exe <path>] [--no-warmup]
+                                     (with --runtime dxmf the game is launched directly with
+                                      the dxmf contract + SteamAppId; --exe skips the resolution)
           gx steam warmup  <box> <appid> [--stop]    compile shaders once, outside the game
           gx steam input   <box> [--check|--on]            physical pad (default) / Steam virtual pad (--on)
           gx steam stop    [box]
+          steam mutations take the box lock (--lock-wait/--force as above);
+          Steam itself never carries the dxmf contract.
 
         \(Out.bold("GAMES"))   (also launchable from Steam itself)
           gx game list
@@ -77,7 +107,11 @@ enum Help {
 
         \(Out.bold("CONFIG"))
           file: ~/.config/game-x/config.toml
-          env:  GX_PREFIX_ROOT, GX_GPTK_APP, GX_WINE, GX_LOG_LEVEL, ...
+          env:  GX_PREFIX_ROOT, GX_GPTK_APP, GX_WINE, GX_LOG_LEVEL, GX_DXMF_STAGE, GX_DXMF_LOG_CAP_MB, ...
+
+          dxmf log cap: GX_DXMF_LOG_CAP_MB / [dxmf] log_cap_mb (default 512 MB).
+          The real size written is always measured with du; when the cap is hit the
+          log is truncated and a marker line is appended, and the game keeps running.
 
         Precedence: CLI flags → GX_* env → config.toml → defaults.
         """

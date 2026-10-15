@@ -145,6 +145,94 @@ func requirePrefix(_ name: String, _ paths: Paths) -> PrefixRecord {
     return prefix
 }
 
+// MARK: - Box lock (one helper for every mutating command)
+
+/// Il debug "globale" è filtrato da `args` all'avvio (`--verbose`/`--debug`):
+/// va letto da `CommandLine.arguments`, non dai flag del comando.
+func globalDebugRequested() -> Bool {
+    let argv = CommandLine.arguments
+    return argv.contains("--verbose") || argv.contains("-v") || argv.contains("--debug")
+}
+
+/// Prende il lock del box per tutta la durata del corpo. Legge `--lock-wait` e
+/// `--force`; con `--force` che rompe un lock **vivo** stampa chi ha rotto
+/// (pid, command, reason, età) prima di procedere. Il lock è rilasciato sempre.
+func withBoxLock<T>(
+    _ box: String,
+    _ config: Config,
+    command: String,
+    reason: String,
+    flags: [String: String],
+    _ body: () throws -> T
+) throws -> T {
+    let wait = TimeInterval(flags["lock-wait"] ?? "") ?? 0
+    let force = flags["force"] != nil
+    if force, case .held(let holder) = BoxLock.state(box: box, config: config) {
+        Out.print(Out.yellow("breaking live lock on '\(box)': \(holder)"))
+    }
+    let handle = try lockOrFail(box: box, config: config, command: command,
+                                reason: reason, wait: wait, force: force)
+    defer { handle.release() }
+    return try body()
+}
+
+/// Acquisisce il lock o esce con un rifiuto che nomina pid/età/command/reason.
+private func lockOrFail(
+    box: String, config: Config, command: String, reason: String,
+    wait: TimeInterval, force: Bool
+) throws -> BoxLock.Handle {
+    do {
+        return try BoxLock.acquire(
+            box: box, config: config, command: command, reason: reason,
+            wait: wait, force: force,
+            onWait: { holder, waited in
+                Out.print(Out.dim("waiting for box '\(box)': \(holder) — \(Int(waited))s"))
+            })
+    } catch let error as BoxLock.LockError {
+        fail(.denied(error.description))
+    } catch {
+        fail(.denied("cannot lock box '\(box)': \(error)"))
+    }
+}
+
+/// Config passata alla libreria mentre il CLI tiene già il lock del box.
+///
+/// `Prefix`/`Steam` ricontrollano `BoxLock` prima di mutare (`refuseIfLocked`),
+/// quindi un CLI che ha preso il lock e poi chiama la libreria rifiuterebbe il
+/// **proprio** lock. Il controllo di libreria è una rete per i chiamanti non-CLI:
+/// sotto il lock del CLI è ridondante. Si sposta la libreria su una cartella lock
+/// scudo, così il suo controllo passa; il lock canonico (tenuto qui, visibile a
+/// `box info`/`box list` e alla GUI) resta la fonte unica. La cache shim è
+/// condivisa con un symlink per non ricompilare nulla.
+func libraryConfig(_ config: Config) -> Config {
+    var copy = config
+    let fm = FileManager.default
+    let canonical = Paths.url(config.cacheRoot)
+    let shield = canonical.appendingPathComponent(".cli-lock-shield")
+    try? fm.createDirectory(at: shield, withIntermediateDirectories: true)
+    let shieldShims = shield.appendingPathComponent("shims")
+    let canonicalShims = canonical.appendingPathComponent("shims")
+    if !fm.fileExists(atPath: shieldShims.path),
+       fm.fileExists(atPath: canonicalShims.path) {
+        try? fm.createSymbolicLink(atPath: shieldShims.path,
+                                   withDestinationPath: canonicalShims.path)
+    }
+    copy.cacheRoot = shield.path
+    return copy
+}
+
+/// Quali delle tre librerie di supporto la cartella deps fornisce davvero.
+func dxmfProvidedLibraries(in dir: URL) -> [String] {
+    let required: [(prefix: String, name: String)] = [
+        ("libfreetype", "freetype"),
+        ("libMoltenVK", "MoltenVK"),
+        ("libgnutls", "gnutls"),
+    ]
+    guard let items = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return [] }
+    return required.filter { entry in items.contains { $0.hasPrefix(entry.prefix) } }
+        .map { $0.name }
+}
+
 // MARK: - Dispatch
 
 guard let command = args.first else {
@@ -182,6 +270,9 @@ case "deps":
 
 case "steam":
     cmdSteam(rest)
+
+case "dxmf":
+    cmdDXMF(rest)
 
 case "game":
     cmdGame(rest)
@@ -546,24 +637,34 @@ func cmdPrefix(_ args: [String]) {
 
     switch sub {
     case "list", "ls":
-        cmdPrefixList(paths: paths, showTrash: flags["trash"] != nil)
+        cmdPrefixList(paths: paths, config: config, showTrash: flags["trash"] != nil)
 
     case "create", "new":
         guard let name = pos.first else {
-            fail(.usage("usage: gx box create <name> [--runtime staging|gptk|homebrew|<path>] [--force]"))
+            fail(.usage("usage: gx box create <name> [--runtime staging|dxmf|gptk|homebrew|<path>] [--force]"))
         }
         guard let rt = Runtime.select(flags["runtime"], config: config) else {
             fail(.runtimeNotFound("runtime '\(flags["runtime"] ?? "auto")' not found"))
         }
+        // Coppia incompatibile (host ≠ pin dei moduli): si rifiuta per nome, mai in silenzio.
+        if rt.kind == .dxmfWine, let info = rt.dxmf,
+           let reason = info.unusableReason, flags["force"] == nil {
+            fail(.denied(reason))
+        }
         do {
-            let b = try Prefix.create(name, config: config, runtime: rt, force: flags["force"] != nil)
-            Out.print(Out.green("box '\(b.name)' ready") + " → \(b.url.path)")
-            Out.print(Out.dim("   runtime: \(rt.summary)"))
+            try withBoxLock(name, config,
+                            command: "gx box create \(name)",
+                            reason: "create", flags: flags) {
+                let b = try Prefix.create(name, config: libraryConfig(config),
+                                          runtime: rt, force: flags["force"] != nil)
+                Out.print(Out.green("box '\(b.name)' ready") + " → \(b.url.path)")
+                Out.print(Out.dim("   runtime: \(rt.summary)"))
+            }
         } catch { fail(.denied("\(error)")) }
 
     case "info":
         guard let name = pos.first else { fail(.usage("usage: gx box info <name>")) }
-        cmdPrefixInfo(requirePrefix(name, paths))
+        cmdPrefixInfo(requirePrefix(name, paths), config: config)
 
     case "remove", "rm":
         guard let name = pos.first else {
@@ -574,15 +675,19 @@ func cmdPrefix(_ args: [String]) {
             fail(.usage("removing '\(name)' requires --yes (saves may be lost)"))
         }
         do {
-            Prefix.kill(b, runtime: runtimeForPrefix(b, config: config, override: flags["runtime"]))
-            if flags["purge"] != nil {
-                try FileManager.default.removeItem(at: b.url)
-                Out.print(Out.green("box '\(name)' deleted permanently"))
-            } else {
-                let destination = try Prefix.remove(b, paths: paths)
-                Out.print(Out.green("box '\(name)' moved to internal trash"))
-                Out.print(Out.dim("   \(destination.path)"))
-                Out.print(Out.dim("   delete: gx box purge '\(destination.lastPathComponent)'"))
+            try withBoxLock(name, config,
+                            command: "gx box remove \(name)",
+                            reason: "remove", flags: flags) {
+                Prefix.kill(b, runtime: runtimeForPrefix(b, config: config, override: flags["runtime"]))
+                if flags["purge"] != nil {
+                    try FileManager.default.removeItem(at: b.url)
+                    Out.print(Out.green("box '\(name)' deleted permanently"))
+                } else {
+                    let destination = try Prefix.remove(b, paths: libraryConfig(config).resolvedPaths())
+                    Out.print(Out.green("box '\(name)' moved to internal trash"))
+                    Out.print(Out.dim("   \(destination.path)"))
+                    Out.print(Out.dim("   delete: gx box purge '\(destination.lastPathComponent)'"))
+                }
             }
         } catch { fail(.denied("\(error)")) }
 
@@ -590,7 +695,14 @@ func cmdPrefix(_ args: [String]) {
         let trash = paths.prefixRoot.appendingPathComponent(".trash")
         if flags["all"] != nil {
             if let items = try? FileManager.default.contentsOfDirectory(atPath: trash.path) {
-                for item in items { try? Prefix.purge(trash.appendingPathComponent(item)) }
+                for item in items {
+                    let url = trash.appendingPathComponent(item)
+                    let boxName = PrefixRecord(name: item, url: url).loadMeta()?.name ?? item
+                    try? withBoxLock(boxName, config, command: "gx box purge \(item)",
+                                     reason: "purge", flags: flags) {
+                        try Prefix.purge(url, config: libraryConfig(config))
+                    }
+                }
                 Out.print(Out.green("\(items.count) items removed from trash"))
             }
         } else if let entry = pos.first {
@@ -598,7 +710,11 @@ func cmdPrefix(_ args: [String]) {
             guard FileManager.default.fileExists(atPath: url.path) else {
                 fail(.prefixNotFound("'\(entry)' is not in the trash"))
             }
-            try? Prefix.purge(url)
+            let boxName = PrefixRecord(name: entry, url: url).loadMeta()?.name ?? entry
+            try? withBoxLock(boxName, config, command: "gx box purge \(entry)",
+                             reason: "purge", flags: flags) {
+                try Prefix.purge(url, config: libraryConfig(config))
+            }
             Out.print(Out.green("deleted '\(entry)'"))
         } else {
             fail(.usage("usage: gx box purge <entry> | --all"))
@@ -633,7 +749,7 @@ func cmdPrefix(_ args: [String]) {
     }
 }
 
-func cmdPrefixList(paths: Paths, showTrash: Bool) {
+func cmdPrefixList(paths: Paths, config: Config, showTrash: Bool) {
     let prefixes = Prefix.list(paths: paths)
     if prefixes.isEmpty {
         Out.print("no boxes in \(paths.prefixRoot.path)")
@@ -644,6 +760,11 @@ func cmdPrefixList(paths: Paths, showTrash: Bool) {
             var tags: [String] = []
             if let meta { tags.append(meta.runtimeKind) }
             if b.hasSteam { tags.append(Out.green("+Steam")) }
+            switch BoxLock.state(box: b.name, config: config) {
+            case .held: tags.append(Out.red("(locked)"))
+            case .stale: tags.append(Out.yellow("(stale lock)"))
+            case .free: break
+            }
             let size = ByteFormat.human(b.sizeBytes())
             let tagText = tags.isEmpty ? "" : Out.dim(" [") + tags.joined(separator: Out.dim(", ")) + Out.dim("]")
             Out.print("  \(b.name.padding(toLength: 22, withPad: " ", startingAt: 0))\(size.padding(toLength: 10, withPad: " ", startingAt: 0)) \(tagText)")
@@ -660,12 +781,15 @@ func cmdPrefixList(paths: Paths, showTrash: Bool) {
     }
 }
 
-func cmdPrefixInfo(_ b: PrefixRecord) {
+func cmdPrefixInfo(_ b: PrefixRecord, config: Config) {
     Out.print(Out.bold("Box '\(b.name)'"))
     Out.field("path", b.url.path)
     Out.field("initialized", b.isInitialized ? "yes" : "no")
     Out.field("size", ByteFormat.human(b.sizeBytes()))
     Out.field("steam", b.hasSteam ? Out.green("yes") : "no")
+    if let notice = Prefix.readNotice(b, config: config) {
+        Out.field("lock", notice)
+    }
     if let meta = b.loadMeta() {
         Out.field("runtime", "\(meta.runtimeKind) — \(meta.runtimeVersion)")
         Out.field("created", meta.createdAt)
@@ -715,33 +839,36 @@ func cmdDeps(_ args: [String]) {
         let dryRun = flags["dry-run"] != nil
 
         do {
-            var toRun = verbs
-            if sub == "install" {
-                let installed = Deps.listInstalled(prefix: b, config: config, runtime: rt)
-                let already = verbs.filter { installed.contains($0) }
-                toRun = verbs.filter { !installed.contains($0) }
-                if !already.isEmpty { Out.print(Out.dim("already installed: \(already.joined(separator: " "))")) }
-                if toRun.isEmpty { Out.print(Out.green("nothing to do")); return }
-            }
+            try withBoxLock(b.name, config, command: "gx deps \(sub) \(b.name)",
+                            reason: "deps \(sub)", flags: flags) {
+                var toRun = verbs
+                if sub == "install" {
+                    let installed = Deps.listInstalled(prefix: b, config: config, runtime: rt)
+                    let already = verbs.filter { installed.contains($0) }
+                    toRun = verbs.filter { !installed.contains($0) }
+                    if !already.isEmpty { Out.print(Out.dim("already installed: \(already.joined(separator: " "))")) }
+                    if toRun.isEmpty { Out.print(Out.green("nothing to do")); return }
+                }
 
-            if dryRun {
-                let cmd = Deps.command(verbs: toRun, remove: sub == "remove")
-                Out.print(Out.bold("dry-run"))
-                Out.field("WINE", rt.wineBinary)
-                Out.field("WINEPREFIX", b.url.path)
-                Out.field("command", "\(config.winetricks) \(cmd.joined(separator: " "))")
-                return
-            }
+                if dryRun {
+                    let cmd = Deps.command(verbs: toRun, remove: sub == "remove")
+                    Out.print(Out.bold("dry-run"))
+                    Out.field("WINE", rt.wineBinary)
+                    Out.field("WINEPREFIX", b.url.path)
+                    Out.field("command", "\(config.winetricks) \(cmd.joined(separator: " "))")
+                    return
+                }
 
-            let code = sub == "install"
-                ? try Deps.install(verbs: toRun, prefix: b, config: config, runtime: rt)
-                : try Deps.remove(verbs: toRun, prefix: b, config: config, runtime: rt)
+                let code = sub == "install"
+                    ? try Deps.install(verbs: toRun, prefix: b, config: config, runtime: rt)
+                    : try Deps.remove(verbs: toRun, prefix: b, config: config, runtime: rt)
 
-            if code == 0 {
-                Out.print(Out.green("\(sub) completed: \(toRun.joined(separator: " "))"))
-                Out.print(Out.dim("   log: \(config.logsRoot)/deps/"))
-            } else {
-                fail(.denied("winetricks exit \(code) — see the log in \(config.logsRoot)/deps/"))
+                if code == 0 {
+                    Out.print(Out.green("\(sub) completed: \(toRun.joined(separator: " "))"))
+                    Out.print(Out.dim("   log: \(config.logsRoot)/deps/"))
+                } else {
+                    throw CLIError.denied("winetricks exit \(code) — see the log in \(config.logsRoot)/deps/")
+                }
             }
         } catch { fail(.denied("\(error)")) }
 
@@ -778,17 +905,21 @@ func cmdSteam(_ args: [String]) {
         let rt = runtimeForSteam(b, config: config, override: flags["runtime"])
         let setup = flags["setup"].map { URL(fileURLWithPath: Paths.expand($0)) }
         do {
-            Out.print("installing Steam in '\(name)' (online download)…")
-            let message = try Steam.install(
-                prefix: b, config: config, runtime: rt,
-                setupPath: setup,
-                setupDownload: flags["no-download"] == nil,
-                waitForUpdate: flags["no-update"] == nil,
-                force: flags["force"] != nil,
-                progress: { Out.print("  \($0)") })
-            Out.print(Out.green(message))
-            Out.print(Out.dim("   runtime: \(rt.summary)"))
-            Out.print(Out.dim("   run with: gx steam run \(name)"))
+            try withBoxLock(name, config, command: "gx steam install \(name)",
+                            reason: "steam install", flags: flags) {
+                let safe = libraryConfig(config)
+                Out.print("installing Steam in '\(name)' (online download)…")
+                let message = try Steam.install(
+                    prefix: b, config: safe, runtime: rt,
+                    setupPath: setup,
+                    setupDownload: flags["no-download"] == nil,
+                    waitForUpdate: flags["no-update"] == nil,
+                    force: flags["force"] != nil,
+                    progress: { Out.print("  \($0)") })
+                Out.print(Out.green(message))
+                Out.print(Out.dim("   runtime: \(rt.summary)"))
+                Out.print(Out.dim("   run with: gx steam run \(name)"))
+            }
         } catch { fail(.denied("\(error)")) }
 
     case "repair":
@@ -796,9 +927,13 @@ func cmdSteam(_ args: [String]) {
         let b = requirePrefix(name, paths)
         let rt = runtimeForSteam(b, config: config, override: flags["runtime"])
         do {
-            let message = try Steam.repair(prefix: b, config: config, runtime: rt,
-                                           force: flags["no-rebuild"] == nil)
-            Out.print(Out.green(message))
+            try withBoxLock(name, config, command: "gx steam repair \(name)",
+                            reason: "steam repair", flags: flags) {
+                let safe = libraryConfig(config)
+                let message = try Steam.repair(prefix: b, config: safe, runtime: rt,
+                                               force: flags["no-rebuild"] == nil)
+                Out.print(Out.green(message))
+            }
         } catch { fail(.denied("\(error)")) }
 
     case "run":
@@ -807,20 +942,33 @@ func cmdSteam(_ args: [String]) {
         guard b.hasSteam else { fail(.notInstalled("Steam not found in box '\(name)'")) }
         let rt = runtimeForSteam(b, config: config, override: flags["runtime"])
         do {
-            let result = try Steam.run(prefix: b, config: config, runtime: rt,
-                                       progress: { Out.print("  \($0)") })
-            exit(result.exitCode)
+            let code = try withBoxLock(name, config, command: "gx steam run \(name)",
+                                       reason: "steam run", flags: flags) {
+                let safe = libraryConfig(config)
+                let result = try Steam.run(prefix: b, config: safe, runtime: rt,
+                                           progress: { Out.print("  \($0)") })
+                return result.exitCode
+            }
+            exit(code)
         } catch { fail(.denied("\(error)")) }
 
     case "launch":
-        guard pos.count >= 2 else { fail(.usage("usage: gx steam launch <box> <appid> [--no-warmup]")) }
+        guard pos.count >= 2 else { fail(.usage("usage: gx steam launch <box> <appid> [--exe <path>] [--no-warmup]")) }
         let b = requirePrefix(pos[0], paths)
         let rt = runtimeForSteam(b, config: config, override: flags["runtime"])
+        // `--exe` esplicito vince sulla risoluzione (che rifiuta se i candidati sono più d'uno).
+        let explicitExe = flags["exe"].map { URL(fileURLWithPath: Paths.expand($0)) }
         do {
-            let result = try Steam.launch(appid: pos[1], prefix: b, config: config, runtime: rt,
-                                          warmupIfCold: flags["no-warmup"] == nil,
-                                          progress: { Out.print("  \($0)") })
-            exit(result.exitCode)
+            let code = try withBoxLock(pos[0], config, command: "gx steam launch \(pos[0]) \(pos[1])",
+                                       reason: "steam launch", flags: flags) {
+                let safe = libraryConfig(config)
+                let result = try Steam.launch(appid: pos[1], prefix: b, config: safe, runtime: rt,
+                                              exe: explicitExe,
+                                              warmupIfCold: flags["no-warmup"] == nil,
+                                              progress: { Out.print("  \($0)") })
+                return result.exitCode
+            }
+            exit(code)
         } catch { fail(.denied("\(error)")) }
 
     case "warmup", "precompile":
@@ -845,7 +993,13 @@ func cmdSteam(_ args: [String]) {
     case "stop":
         let name = boxName()
         let b = requirePrefix(name, paths)
-        Steam.stop(prefix: b, runtime: runtimeForPrefix(b, config: config, override: flags["runtime"]))
+        do {
+            try withBoxLock(name, config, command: "gx steam stop \(name)",
+                            reason: "steam stop", flags: flags) {
+                Steam.stop(prefix: b, config: libraryConfig(config),
+                           runtime: runtimeForPrefix(b, config: config, override: flags["runtime"]))
+            }
+        } catch { fail(.denied("\(error)")) }
         Out.print("Steam stopped in box '\(name)'")
 
     case "input":
@@ -891,6 +1045,256 @@ func cmdSteam(_ args: [String]) {
     default:
         fail(.usage("unknown steam subcommand: '\(sub)'"))
     }
+}
+
+// MARK: - dxmf CLI (F003)
+
+func cmdDXMF(_ args: [String]) {
+    guard let sub = args.first else {
+        fail(.usage("usage: gx dxmf <status|modules|run> [box]"))
+    }
+    let rest = Array(args.dropFirst())
+    switch sub {
+    case "status":
+        cmdDXMFStatus(rest)
+    case "modules":
+        cmdDXMFModules(rest)
+    case "run":
+        cmdDXMFRun(rest)
+    default:
+        fail(.usage("unknown dxmf subcommand: '\(sub)'. Try `gx help`."))
+    }
+}
+
+/// `gx dxmf status [box]` — host, stage, pin, capacità, deps, tetto di log,
+/// orfani e (se il box è dato) stato del lock. Exit 0 solo se i moduli si caricano.
+func cmdDXMFStatus(_ args: [String]) {
+    let (config, paths) = loadContext()
+    let (pos, _) = splitArgs(args)
+
+    guard let info = DXMF.discover(config: config) else {
+        Out.print(Out.yellow("dxmf runtime not found (host \(config.dxmfWineRoot))"))
+        Out.print(Out.dim("   expected: <host>/bin/wine + a stage with d3d11/dxgi (GX_DXMF_STAGE)"))
+        exit(ExitCode.runtimeNotFound.rawValue)
+    }
+
+    Out.print(Out.bold("dxmf runtime"))
+    Out.field("host", info.wineBinary)
+    Out.field("wine version", info.wineVersion)
+    Out.field("stage", info.stageRoot.path)
+    Out.field("modules", info.modules.joined(separator: ","))
+    let pin = info.pinnedVersion ?? DXMF.pinnedWineVersion
+    Out.field("pin", pin + (info.pinSource.map { " (from \($0))" } ?? " (default)"))
+    Out.field("capabilities", info.hostCapabilities.summary)
+    if let mismatch = info.versionMismatch {
+        Out.field("version mismatch", Out.red(mismatch))
+    }
+    if let reason = info.unusableReason {
+        Out.field("unusable", Out.red(reason))
+    }
+
+    if let deps = DXMF.resolveDepsDir(config: config, runtimeRoot: info.runtimeRoot) {
+        let provided = dxmfProvidedLibraries(in: deps)
+        let detail = provided.isEmpty ? "none of freetype, MoltenVK, gnutls" : provided.joined(separator: ", ")
+        Out.field("deps", "\(deps.path) (\(detail))")
+    } else {
+        Out.field("deps", Out.dim("— (set GX_DXMF_DEPS or place x64deps)"))
+    }
+
+    Out.field("log cap", "\(config.dxmfLogCapMB) MB (measured with du)")
+    let orphans = Orphans.scan()
+    Out.field("winedbg orphans", "\(orphans.winedbg.count)" + (orphans.isCrowded ? " " + Out.red("(crowded)") : ""))
+
+    if let boxName = pos.first {
+        if let b = Prefix.find(boxName, paths: paths) {
+            if let notice = Prefix.readNotice(b, config: config) {
+                Out.field("lock", notice)
+            } else {
+                Out.field("lock", Out.green("free"))
+            }
+        } else {
+            Out.field("lock", Out.yellow("box '\(boxName)' not found"))
+        }
+    }
+
+    exit(info.isUsable ? ExitCode.ok.rawValue : ExitCode.runtimeNotFound.rawValue)
+}
+
+/// `gx dxmf modules [box]` — per ogni modulo PE e unix path + sha256: la prova
+/// per **contenuto** nell'`lsof` (il path, non il nome).
+func cmdDXMFModules(_ args: [String]) {
+    let (config, _) = loadContext()
+    let (pos, _) = splitArgs(args)
+    guard let info = DXMF.discover(config: config) else {
+        fail(.runtimeNotFound("dxmf runtime not found (host \(config.dxmfWineRoot))"))
+    }
+    if let boxName = pos.first {
+        Out.print(Out.dim("# stage resolved from config; box '\(boxName)' is informational only"))
+    }
+    Out.print(Out.bold("dxmf modules") + " " + Out.dim("(\(info.stageRoot.path))"))
+    for module in DXMF.moduleFiles(for: info) {
+        let peHash = (try? DXMT.fileSHA256(module.pe)) ?? "<unreadable>"
+        let unixHash = (try? DXMT.fileSHA256(module.unix)) ?? "<unreadable>"
+        Out.print(Out.bold(module.name))
+        Out.field("pe", "\(module.pe.path)  sha256 \(peHash)")
+        Out.field("unix", "\(module.unix.path)  sha256 \(unixHash)")
+    }
+}
+
+/// `gx dxmf run <box> [flags] -- <cmd...>` — il comando che finora si componeva
+/// a memoria. Prende il lock per tutta la durata, controlla gli orfani, rifiuta
+/// una coppia runtime/moduli incompatibile e lancia il processo col contratto dxmf.
+func cmdDXMFRun(_ args: [String]) {
+    let (config, paths) = loadContext()
+    let (pos, flags) = splitArgs(args)
+    guard let boxName = pos.first else {
+        fail(.usage("usage: gx dxmf run <box> [flags] -- <cmd...>"))
+    }
+    let command = Array(pos.dropFirst())
+    guard !command.isEmpty else {
+        fail(.usage("no command given; usage: gx dxmf run <box> [flags] -- <cmd...>"))
+    }
+
+    do {
+        let code = try withBoxLock(
+            boxName, config,
+            command: "gx dxmf run \(boxName)",
+            reason: "dxmf run",
+            flags: flags
+        ) {
+            try dxmfRunLocked(boxName: boxName, config: config, paths: paths,
+                              flags: flags, command: command)
+        }
+        exit(code)
+    } catch let error as CLIError {
+        fail(error)
+    } catch {
+        fail(.denied("\(error)"))
+    }
+}
+
+/// Corpo di `dxmf run`, eseguito con il lock già tenuto. Non chiama mai `fail`
+/// (che uscirebbe saltando il `defer` del lock): lancia `CLIError`.
+func dxmfRunLocked(
+    boxName: String, config: Config, paths: Paths,
+    flags: [String: String], command: [String]
+) throws -> Int32 {
+    guard let b = Prefix.find(boxName, paths: paths) else {
+        throw CLIError.prefixNotFound("box '\(boxName)' not found in \(paths.prefixRoot.path)")
+    }
+
+    // Igiene: sempre il conteggio; --sweep spazza; affollato ⇒ rifiuto (a meno di --force).
+    let orphans = Orphans.scan()
+    let limitText = orphans.softLimit.map { " of \($0)" } ?? ""
+    Out.print(Out.dim("winedbg orphans: \(orphans.winedbg.count) (processes \(orphans.totalProcesses)\(limitText))"))
+    if flags["sweep"] != nil {
+        let killed = Orphans.sweepWinedbg()
+        Out.print("swept \(killed) winedbg orphan(s)")
+    }
+    if orphans.isCrowded && flags["force"] == nil {
+        throw CLIError.denied(
+            "process table is crowded (\(orphans.totalProcesses)\(limitText) processes): "
+            + "pass --sweep to clean the winedbg orphans or --force to run anyway")
+    }
+
+    // Runtime del box: quello registrato, altrimenti la risoluzione globale. Mai `fail`.
+    let runtime: ResolvedRuntime
+    if let explicit = flags["runtime"], let selected = Runtime.select(explicit, config: config) {
+        runtime = selected
+    } else if let forPrefix = Runtime.forPrefix(b, config: config) {
+        runtime = forPrefix
+    } else if let fallback = Runtime.resolve(config: config) {
+        runtime = fallback
+    } else {
+        throw CLIError.runtimeNotFound("no Wine runtime found for box '\(boxName)'")
+    }
+
+    guard let info = runtime.dxmf else {
+        throw CLIError.denied(
+            "box '\(boxName)' runs \(runtime.kind.rawValue), not dxmf; "
+            + "create it with `gx box create \(boxName) --runtime dxmf`")
+    }
+    if let reason = info.unusableReason {
+        throw CLIError.denied(reason)
+    }
+
+    // Diagnostica: quiet di default; --verbose/--debug la accendono; --frame-log la espone.
+    let quiet = !globalDebugRequested()
+    let depsDir = DXMF.resolveDepsDir(config: config, runtimeRoot: info.runtimeRoot)
+    let diagnostics = DXMF.Diagnostics(
+        quiet: quiet,
+        frameLog: flags["frame-log"].map { URL(fileURLWithPath: Paths.expand($0)) },
+        lockDir: config.dxmfLockDir.isEmpty ? nil : config.dxmfLockDir,
+        gateLockWait: config.dxmfGateLockWait > 0 ? config.dxmfGateLockWait : nil,
+        depsDir: depsDir)
+
+    var extra: [String: String] = [:]
+    if let appid = flags["appid"] {
+        extra["SteamAppId"] = appid
+        extra["SteamGameId"] = appid
+    }
+    let winedebug = flags["winedebug"]
+    if let winedebug { extra["WINEDEBUG"] = winedebug }
+
+    let env = Prefix.dxmfLaunchEnvironment(
+        config: config, prefix: b.url, info: info,
+        diagnostics: diagnostics, extra: extra)
+
+    // Tetto di log: default config.dxmfLogCapMB; --max-log-mb N lo sovrascrive;
+    // 0 = illimitato (avviso rumoroso); con --winedebug il tetto è obbligatorio.
+    let capMB: Int
+    if let raw = flags["max-log-mb"] {
+        guard let n = Int(raw) else {
+            throw CLIError.usage("--max-log-mb requires a number, got '\(raw)'")
+        }
+        capMB = n
+    } else {
+        capMB = config.dxmfLogCapMB
+    }
+    if winedebug != nil && capMB <= 0 {
+        throw CLIError.usage("--winedebug requires a finite log cap: pass --max-log-mb > 0")
+    }
+    if capMB <= 0 {
+        Out.print(Out.yellow("WARNING: log cap DISABLED (--max-log-mb 0): a debug run can fill the disk"))
+    }
+    let cap = LogCap(path: LogCap.default(config: config, box: boxName).path,
+                     capBytes: Int64(max(0, capMB)) * 1_048_576)
+
+    if flags["dry-run"] != nil {
+        Out.print(Out.bold("dxmf run (dry-run)"))
+        Out.field("box", boxName)
+        Out.field("wine", info.wineBinary)
+        Out.field("stage", info.stageRoot.path)
+        Out.field("modules", info.modules.joined(separator: ","))
+        Out.field("command", command.joined(separator: " "))
+        Out.field("log", cap.path.path)
+        Out.field("log cap", capMB <= 0 ? Out.yellow("unlimited") : "\(capMB) MB")
+        Out.print()
+        Out.print(Out.bold("environment"))
+        for key in env.keys.sorted() {
+            Out.print("  \(key)=\(env[key] ?? "")")
+        }
+        return ExitCode.ok.rawValue
+    }
+
+    // Riga di prova per l'lsof: stage, moduli, deps.
+    let provided = depsDir.map { dxmfProvidedLibraries(in: $0) } ?? []
+    Out.print("stage: \(info.stageRoot.path)")
+    Out.print("modules: \(info.modules.joined(separator: ","))")
+    Out.print("deps: \(depsDir?.path ?? "—") (\(provided.joined(separator: ", ")))")
+
+    let outcome = try LaunchLog.run(
+        info.wineBinary, command, environment: env, cap: cap,
+        onCap: { total in
+            Out.print(Out.yellow("log cap reached after \(total) bytes; truncating \(cap.path.path)"))
+        })
+
+    Out.print("exit: \(outcome.exit)")
+    Out.print("log: \(cap.path.path)")
+    Out.print("written: \(outcome.written) bytes")
+    Out.print("du: \(outcome.duBytes) bytes")
+    Out.print("truncated: \(outcome.truncated ? "yes" : "no")")
+    return outcome.exit
 }
 
 func cmdGame(_ args: [String]) {
