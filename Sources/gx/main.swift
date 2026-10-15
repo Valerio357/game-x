@@ -728,6 +728,22 @@ func cmdPrefix(_ args: [String]) {
         if command.first == "--" { command.removeFirst() }
         guard !command.isEmpty else { fail(.usage("no command to run")) }
         do {
+            // Su un box **dxmf** anche `box exec` porta il contratto d'ambiente:
+            // e' il percorso che il progetto documenta come «gioco diretto, senza
+            // Steam» (`dxmf/DXMF.md` §4.5). Senza, in un box con dxvk il programma
+            // muore all'import (`STATUS_DLL_NOT_FOUND`, 0xC0000135) prima di
+            // qualunque codice dxmf — la stessa classe del rilievo D1 di
+            // `game launch`. Steam resta l'eccezione, gestita da `Steam.steamEnvironment`.
+            if let info = rt.dxmf {
+                let env = Prefix.dxmfLaunchEnvironment(
+                    config: config, prefix: b.url, info: info,
+                    diagnostics: DXMF.Diagnostics.defaults(config: config),
+                    extra: flags["appid"].map { ["SteamAppId": $0, "SteamGameId": $0] } ?? [:])
+                let result = try ProcessRunner.run(rt.wineBinary, command, environment: env)
+                if !result.stdout.isEmpty { FileHandle.standardOutput.write(Data(result.stdout.utf8)) }
+                if !result.stderr.isEmpty { FileHandle.standardError.write(Data(result.stderr.utf8)) }
+                exit(result.exitCode)
+            }
             let result = try Prefix.exec(b, command: command, config: config, runtime: rt)
             if !result.stdout.isEmpty { FileHandle.standardOutput.write(Data(result.stdout.utf8)) }
             if !result.stderr.isEmpty { FileHandle.standardError.write(Data(result.stderr.utf8)) }
