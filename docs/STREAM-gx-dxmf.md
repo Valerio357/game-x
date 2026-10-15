@@ -21,7 +21,10 @@ Design e API congelate: `docs/GX-DXMF.md`.
 | F003 | CLI: `gx dxmf run/status/modules`, flag diagnostica, tetto di log, lock su ogni mutazione | `Sources/gx/main.swift`, `Sources/gx/Help.swift`, `Sources/GameXCore/LaunchLog.swift` (nuovo) | W3 | **validato** (VAL1 6/6 PASS) | `b7c214f` |
 | F004 | Innesti: prefix lock-aware, find per enumerazione, Steam su dxvk + gioco su dxmf, doctor | `Sources/GameXCore/Prefix.swift`, `Steam.swift`, `Doctor.swift` | W4 | **validato** (VAL1 6/6 PASS) | `77542a3` |
 | F005 | Validazione indipendente + accettazione (lsof) + correzione D1 | `evidence/`, `GameLauncher.swift` | ORCH + VAL1/VAL2 | **VALID1 6/6 PASS · VAL2 5/5 PASS**; D1 corretto e testato; accettazione giocata = CEO | — |
-| F006 | **Lock di MUTAZIONE, non di vita** (difetto trovato dal CEO usando `gx`) | `BoxLock.swift`, `main.swift`, `Help.swift`, e2e | ORCH + VAL3 | fix + prova e2e **PASS 8/8** | — |
+| F006 | **Lock di MUTAZIONE, non di vita** (difetto trovato dal CEO usando `gx`) | `BoxLock.swift`, `main.swift`, `Help.swift`, e2e | ORCH + VAL3 | **VAL3 PASS A–F** con base-rosso/candidato-verde; e2e **8/8**; prova su box REALE con Steam vivo | `6b537c4` |
+| F007 | Difetti di VAL3 (log dei run concorrenti, guardia su `purge`, guardia in-uso sulle mutazioni) | `LaunchLog.swift`, `main.swift` | W5 | fatto, `262/262` | `43aad6a` |
+| F008 | `gx dxmf doctor <box>` (richiesto dal CEO) | `DXMFDoctor.swift`, `main.swift`, `Help.swift` | W5 | fatto; **ha trovato la causa della box nera** | `43aad6a` |
+| F009 | Accettazione su box mia (`gxdxmf-acc`, Steam+Thymesia copiati) | `evidence/acceptance/steam-game/` | ORCH | parziale: vedi sotto | — |
 
 ## Verifica (criterio di riuscita)
 
@@ -79,6 +82,39 @@ contiene "wine"); (ii) leggevo `WINEPREFIX` dall'ambiente con `ps eww`, che **su
 non stampa l'ambiente** (l'unico match era il `grep` stesso). Il segnale usato è ora il
 **socket del wineserver del prefix**, verificato: presente mentre vive, sparito dopo
 `wineserver -k`, assente per un prefix mai avviato.
+
+## F009 — l'accettazione con Steam: cosa e' provato e cosa NO (2026-10-15 notte)
+
+Box mia `gxdxmf-acc` (`~/WinePrefixes/`, 15 GB), Steam+Thymesia copiati dall'albero del
+CEO in **24 s** (ricetta sua, autorizzata), `gx deps install … dxvk dxvk1103` (16 s).
+
+**Provato (con evidenza)**:
+- `gx dxmf run gxdxmf-acc -- cmd /c echo …` con **Steam VERO vivo nella stessa box**: `exit 0`,
+  **zero** «is locked by» — la sequenza che al CEO falliva, ora funziona sulla box reale;
+- Steam **parte**, crea finestre, **si connette** ai server Steam (`connection_log`:
+  `Connected`), TLS/gnutls OK; il socket del wineserver c'e' (`box IN USO`);
+- `gx dxmf doctor` **ha nominato la causa** della box nera: `prefix wine-mono — missing`.
+
+**NON provato: la UI di Steam visibile.** Due cause, entrambe azionabili:
+1. **lo shim non c'era** nella copia (file vero da 7,5 MB in **tutte** e tre le box, quella
+   del CEO compresa: `gx steam status` dice `shim: no`). `gx dxmf run -- steam.exe` **non**
+   lo applica, `gx steam run`/`steam repair` si'. Applicato: `148 KB`, flag
+   `--no-sandbox --disable-gpu --single-process` (prima della cura, la finestra era un
+   **rettangolo nero opaco**);
+2. **wine-mono mancava** (installato poi nella mia box; `doctor` ora `[ OK ]`).
+Residuo: **il login non viaggia con l'albero** (Steam resta a `U:1:0` → «Sign in to Steam»)
+e l'ultima verifica visiva e' **impedita da una limitazione di misura**, non da un difetto
+accertato: la finestra di Steam e' **coperta** dalla finestra di Cloudroom, `System Events`
+e' **vietato** (nessun permesso Accessibility: `osascript` → `-1719`) e la cattura
+*per-finestra* di una finestra Wine esce **nera** (limite noto di `screencapture -l` con
+layer Metal). Chiude questa meta' il CEO, che e' alla macchina: basta cliccare la finestra.
+
+**Difetti di prodotto trovati in questa meta' (backlog dichiarato)**:
+- `gx dxmf run -- <steam.exe>` non applica **shim**/crash-dialog/mono: la ricetta «Steam con
+  `dxmf run`» produce una box nera. O si instrada su `gx steam run`, o si rifiuta per nome.
+- `gx runtime mono` **non funziona su una box dxmf** (cerca un runtime DXMT: verificato,
+  `no Game-X Wine+DXMT runtime found`). Il remedy del doctor e' stato corretto con il
+  comando che funziona davvero.
 
 ## Limite di metodo del VALIDATOR (registrato per non leggerlo come una prova)
 

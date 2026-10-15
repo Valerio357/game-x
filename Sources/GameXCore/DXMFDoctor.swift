@@ -312,8 +312,13 @@ public enum DXMFDoctor {
             checks.append(.init(
                 id: "prefix.mono", status: .fail,
                 title: "prefix wine-mono — missing",
-                detail: "the Steam UI (CEF) needs wine-mono",
-                remedy: "gx runtime mono (or gx steam repair \(box))"))
+                detail: "the Steam UI (CEF) needs wine-mono: without it CEF never "
+                    + "paints (black or empty window)",
+                // `gx runtime mono` e' legato al runtime DXMT e su una box dxmf NON
+                // funziona (verificato): il rimedio deve essere quello che funziona.
+                remedy: "install it into the box with msiexec: "
+                    + "WINEPREFIX=\(record.url.path) \"$(gx dxmf status | sed -n 's/^  host *: //p')\" "
+                    + "msiexec /i <wine-mono-*.msi> /qn  (MSI: dl.winehq.org/wine/wine-mono/)"))
         } else {
             checks.append(.init(id: "prefix.mono", status: .warn,
                                 title: "prefix wine-mono — missing",
