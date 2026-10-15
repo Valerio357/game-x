@@ -190,7 +190,7 @@ public enum DXMF {
                 + "(`ERROR_MOD_NOT_FOUND`, 126)"
         }
 
-        static let requiredLibraries = ["freetype", "MoltenVK", "gnutls"]
+        public static let requiredLibraries = ["freetype", "MoltenVK", "gnutls"]
 
         private var missingPatches: [String] {
             var missing: [String] = []
@@ -452,6 +452,21 @@ public enum DXMF {
 
         for (key, value) in extra { env[key] = value }
         return env
+    }
+
+    /// Quali delle tre librerie di supporto la cartella deps fornisce davvero
+    /// (match per prefisso del nome: `libfreetype`, `libMoltenVK`, `libgnutls`).
+    public static func providedSupportLibraries(in dir: URL) -> [String] {
+        let required: [(prefix: String, name: String)] = [
+            ("libfreetype", "freetype"),
+            ("libMoltenVK", "MoltenVK"),
+            ("libgnutls", "gnutls"),
+        ]
+        guard let items = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+            return []
+        }
+        return required.filter { entry in items.contains { $0.hasPrefix(entry.prefix) } }
+            .map { $0.name }
     }
 
     /// Da dove arrivano le dylib di supporto, in ordine: `[dxmf] deps`/`GX_DXMF_DEPS`

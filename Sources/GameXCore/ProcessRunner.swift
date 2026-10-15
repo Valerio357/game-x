@@ -14,12 +14,17 @@ public enum ProcessError: Error, CustomStringConvertible {
     case executableNotFound(String)
     case launchFailed(String, String)
     case timedOut(String)
+    /// Il path di log richiesto esiste già: `LaunchLog` non tronca mai in
+    /// silenzio, rifiuta per nome (cfr. D1, `6b537c4`).
+    case logPathExists(String)
 
     public var description: String {
         switch self {
         case .executableNotFound(let p): return "executable not found: \(p)"
         case .launchFailed(let p, let m): return "launch failed (\(p)): \(m)"
         case .timedOut(let p): return "timeout: \(p)"
+        case .logPathExists(let p):
+            return "refusing to reuse an existing log path (it would be truncated silently): \(p)"
         }
     }
 }

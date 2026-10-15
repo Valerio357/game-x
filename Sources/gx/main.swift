@@ -176,28 +176,49 @@ func withBoxLock<T>(
     return try body()
 }
 
-/// Una box **in uso** non si ricrea e non si rimuove per sbaglio.
+/// Guardia distruttiva su un **URL** (non solo su un nome nel `prefixRoot`):
+/// copre sia `prefixRoot/<nome>` sia una voce del `.trash`. `Prefix.remove`
+/// sposta la cartella sullo stesso filesystem, quindi l'inode — e il socket del
+/// wineserver — restano validi per il path nel cestino (D2).
+///
+/// Ritorna `false` solo quando la voce va **saltata** (`purge --all`).
+@discardableResult
+func guardDestructiveURL(_ url: URL, flags: [String: String], action: String,
+                         failOnUse: Bool = true) -> Bool {
+    switch BoxLock.destructiveGuard(url) {
+    case .proceed:
+        return true
+    case .unverified:
+        Out.print(Out.yellow("warning: could not verify whether '\(url.lastPathComponent)' "
+                             + "is in use — proceeding"))
+        return true
+    case .inUse(let detail):
+        if flags["force"] != nil {
+            Out.print(Out.yellow("warning: \(action) '\(url.lastPathComponent)' while it is "
+                                 + "in use: \(detail)"))
+            return true
+        }
+        let message = "'\(url.lastPathComponent)' is in use: \(detail)\n"
+            + "  stop it first (gx box kill <box>, gx steam stop <box>), "
+            + "or pass --force to \(action) it anyway\n"
+            + "  (a crash can leave an orphan socket: --force is the escape hatch)"
+        if failOnUse { fail(.denied(message)) }
+        Out.print(Out.yellow("skipping: \(message)"))
+        return false
+    }
+}
+
+/// Una box **in uso** non si ricrea, non si rimuove e non si muta per sbaglio.
 ///
 /// E' la protezione dell'incidente che avrebbe potuto costare 11,57 GB: un
-/// `box create` su una box **piena e con processi vivi**. Rifiuta **nominando** i
-/// processi; `--force` procede (dichiarandolo). Se la verifica non e' possibile
-/// (`verified == false`) lo **dice** invece di assumere che sia libera.
+/// `box create` su una box **piena e con processi vivi**. Rifiuta **nominando** il
+/// socket del wineserver; `--force` procede (dichiarandolo). Se la verifica non
+/// e' possibile (`verified == false`) lo **dice** invece di assumere che sia
+/// libera. La stessa guardia copre `deps install/remove` e `steam install/repair`
+/// (D3): un gioco vivo non deve essere scalzato da una mutazione.
 func guardDestructive(_ box: String, paths: Paths, flags: [String: String], action: String) {
     guard let record = Prefix.find(box, paths: paths) else { return }   // non esiste: nulla da proteggere
-    let use = BoxLock.prefixInUse(prefix: record.url)
-    if !use.verified {
-        Out.print(Out.yellow("warning: could not verify whether '\(box)' is in use — proceeding"))
-        return
-    }
-    guard use.inUse else { return }
-    if flags["force"] != nil {
-        Out.print(Out.yellow("warning: \(action) '\(box)' while it is in use: \(use.description)"))
-        return
-    }
-    fail(.denied("box '\(box)' is in use: \(use.description)\n"
-                 + "  stop it first (gx box kill \(box), gx steam stop \(box)), "
-                 + "or pass --force to \(action) it anyway\n"
-                 + "  (a crash can leave an orphan socket: --force is the escape hatch)"))
+    _ = guardDestructiveURL(record.url, flags: flags, action: action)
 }
 
 /// Un **lancio** non prende il lock: verifica solo che una MUTAZIONE non sia in
@@ -268,14 +289,7 @@ func libraryConfig(_ config: Config) -> Config {
 
 /// Quali delle tre librerie di supporto la cartella deps fornisce davvero.
 func dxmfProvidedLibraries(in dir: URL) -> [String] {
-    let required: [(prefix: String, name: String)] = [
-        ("libfreetype", "freetype"),
-        ("libMoltenVK", "MoltenVK"),
-        ("libgnutls", "gnutls"),
-    ]
-    guard let items = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return [] }
-    return required.filter { entry in items.contains { $0.hasPrefix(entry.prefix) } }
-        .map { $0.name }
+    DXMF.providedSupportLibraries(in: dir)
 }
 
 // MARK: - Dispatch
@@ -739,18 +753,31 @@ func cmdPrefix(_ args: [String]) {
         } catch { fail(.denied("\(error)")) }
 
     case "purge":
+        // D2: anche il purge standalone è protetto. Una box nel `.trash` è
+        // ancora la stessa box (stesso inode): la guardia lavora sull'URL.
         let trash = paths.prefixRoot.appendingPathComponent(".trash")
         if flags["all"] != nil {
             if let items = try? FileManager.default.contentsOfDirectory(atPath: trash.path) {
+                var purged = 0
+                var skipped = 0
                 for item in items {
                     let url = trash.appendingPathComponent(item)
+                    // In `--all` una voce in uso si salta, non fa fallire le altre.
+                    guard guardDestructiveURL(url, flags: flags, action: "purge",
+                                              failOnUse: false) else {
+                        skipped += 1
+                        continue
+                    }
                     let boxName = PrefixRecord(name: item, url: url).loadMeta()?.name ?? item
                     try? withBoxLock(boxName, config, command: "gx box purge \(item)",
                                      reason: "purge", flags: flags) {
                         try Prefix.purge(url, config: libraryConfig(config))
                     }
+                    purged += 1
                 }
-                Out.print(Out.green("\(items.count) items removed from trash"))
+                var summary = "\(purged) items removed from trash"
+                if skipped > 0 { summary += ", \(skipped) skipped (in use)" }
+                Out.print(Out.green(summary))
             }
         } else if let entry = pos.first {
             let url = trash.appendingPathComponent(entry)
@@ -758,6 +785,7 @@ func cmdPrefix(_ args: [String]) {
                 fail(.prefixNotFound("'\(entry)' is not in the trash"))
             }
             let boxName = PrefixRecord(name: entry, url: url).loadMeta()?.name ?? entry
+            guardDestructiveURL(url, flags: flags, action: "purge")
             try? withBoxLock(boxName, config, command: "gx box purge \(entry)",
                              reason: "purge", flags: flags) {
                 try Prefix.purge(url, config: libraryConfig(config))
@@ -902,6 +930,8 @@ func cmdDeps(_ args: [String]) {
         let rt = runtimeForPrefix(b, config: config, override: flags["runtime"])
         let dryRun = flags["dry-run"] != nil
 
+        // D3: non si installano/rimuovono dipendenze mentre un gioco è vivo.
+        guardDestructive(b.name, paths: paths, flags: flags, action: "\(sub) deps in")
         do {
             try withBoxLock(b.name, config, command: "gx deps \(sub) \(b.name)",
                             reason: "deps \(sub)", flags: flags) {
@@ -968,6 +998,8 @@ func cmdSteam(_ args: [String]) {
         let b = requirePrefix(name, paths)
         let rt = runtimeForSteam(b, config: config, override: flags["runtime"])
         let setup = flags["setup"].map { URL(fileURLWithPath: Paths.expand($0)) }
+        // D3: l'installazione di Steam non deve partire su una box con un gioco vivo.
+        guardDestructive(name, paths: paths, flags: flags, action: "install Steam in")
         do {
             try withBoxLock(name, config, command: "gx steam install \(name)",
                             reason: "steam install", flags: flags) {
@@ -990,6 +1022,8 @@ func cmdSteam(_ args: [String]) {
         let name = boxName()
         let b = requirePrefix(name, paths)
         let rt = runtimeForSteam(b, config: config, override: flags["runtime"])
+        // D3: la riparazione non deve partire su una box con un gioco vivo.
+        guardDestructive(name, paths: paths, flags: flags, action: "repair Steam in")
         do {
             try withBoxLock(name, config, command: "gx steam repair \(name)",
                             reason: "steam repair", flags: flags) {
@@ -1110,7 +1144,7 @@ func cmdSteam(_ args: [String]) {
 
 func cmdDXMF(_ args: [String]) {
     guard let sub = args.first else {
-        fail(.usage("usage: gx dxmf <status|modules|run> [box]"))
+        fail(.usage("usage: gx dxmf <status|modules|doctor|run> [box]"))
     }
     let rest = Array(args.dropFirst())
     switch sub {
@@ -1118,6 +1152,8 @@ func cmdDXMF(_ args: [String]) {
         cmdDXMFStatus(rest)
     case "modules":
         cmdDXMFModules(rest)
+    case "doctor":
+        cmdDXMFDoctor(rest)
     case "run":
         cmdDXMFRun(rest)
     default:
@@ -1198,6 +1234,41 @@ func cmdDXMFModules(_ args: [String]) {
         Out.field("pe", "\(module.pe.path)  sha256 \(peHash)")
         Out.field("unix", "\(module.unix.path)  sha256 \(unixHash)")
     }
+}
+
+/// `gx dxmf doctor [box]` — una riga per controllo (`[ OK ]`/`[WARN]`/`[FAIL]`),
+/// dice **cosa manca e come rimediare**. Senza box controlla solo le parti
+/// globali (runtime, moduli, capacità, x64deps, orfani) e lo dichiara.
+/// Exit code: 0 se nessun FAIL, non-zero altrimenti (usabile in uno script).
+func cmdDXMFDoctor(_ args: [String]) {
+    let (config, _) = loadContext()
+    let (pos, _) = splitArgs(args)
+    let box = pos.first
+    if box == nil {
+        Out.print(Out.dim("no box given: checking the global parts (runtime, modules, "
+                          + "capabilities, x64deps, orphans) only"))
+    }
+    let report = DXMFDoctor.run(config: config, box: box)
+    Out.print(Out.bold("gx dxmf doctor"))
+    Out.print()
+    for check in report.checks {
+        let tag: String
+        switch check.status {
+        case .ok: tag = Out.green("[ OK ]")
+        case .warn: tag = Out.yellow("[WARN]")
+        case .fail: tag = Out.red("[FAIL]")
+        }
+        var line = "  \(tag) \(check.title)"
+        if let detail = check.detail { line += Out.dim(" — \(detail)") }
+        Out.print(line)
+        if let remedy = check.remedy {
+            Out.print(Out.dim("         → \(remedy)"))
+        }
+    }
+    let counts = report.counts
+    Out.print()
+    Out.print(Out.dim("  \(counts.ok) ok, \(counts.warn) warn, \(counts.fail) fail"))
+    exit(report.hasFailures ? ExitCode.generic.rawValue : ExitCode.ok.rawValue)
 }
 
 /// `gx dxmf run <box> [flags] -- <cmd...>` — il comando che finora si componeva

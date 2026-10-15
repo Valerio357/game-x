@@ -651,4 +651,9 @@ runPrefixChecks(h)
 runLogChecks(h)
 
 runLockScopeChecks(h)
+
+// F008: `gx dxmf doctor` (runtime, moduli, capacità, x64deps, dipendenze del
+// prefix, lock, orfani).
+runDXMFDoctorChecks(h)
+
 exit(h.finish())

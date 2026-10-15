@@ -200,6 +200,25 @@ public enum BoxLock {
         }
     }
 
+    /// Esito della guardia distruttiva su una box/URL.
+    ///
+    /// Generalizzazione su un **URL** (non solo su un nome nel `prefixRoot`):
+    /// così la stessa guardia copre anche una voce nel `.trash`. `Prefix.remove`
+    /// sposta la cartella sullo stesso filesystem, quindi l'inode — e il socket
+    /// del wineserver (`/tmp/.wine-<uid>/server-<devhex>-<inohex>/socket`) —
+    /// restano validi per il path nel cestino.
+    public enum DestructiveGuard: Sendable, Equatable {
+        case proceed
+        case unverified          // non ho potuto guardare: mai assumere "libera"
+        case inUse(String)       // descrizione che nomina il socket
+    }
+
+    public static func destructiveGuard(_ url: URL) -> DestructiveGuard {
+        let use = prefixInUse(prefix: url)
+        guard use.verified else { return .unverified }
+        return use.inUse ? .inUse(use.description) : .proceed
+    }
+
     public static func prefixInUse(prefix: URL) -> PrefixUse {
         let uid = getuid()
         var dev: UInt64 = 0, ino: UInt64 = 0

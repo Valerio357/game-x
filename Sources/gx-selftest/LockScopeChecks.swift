@@ -94,4 +94,48 @@ func runLockScopeChecks(_ h: Harness) {
     h.check((inUse.socketPath ?? "").contains(name), "the report names the socket that proves it")
     h.check(!BoxLock.prefixInUse(prefix: freeBox).inUse,
             "another box without a wineserver is not blamed")
+
+    // 6) D2: la guardia distruttiva lavora su un **URL**, quindi copre anche una
+    //    voce nel `.trash`. `Prefix.remove` sposta la cartella sullo stesso
+    //    filesystem: l'inode resta, quindi il socket del wineserver resta valido
+    //    e la guardia deve ancora vedere la box come IN USO.
+    let prefixRoot = root.appendingPathComponent("boxes")
+    let original = prefixRoot.appendingPathComponent("gxdxmf-trashed")
+    try? fm.createDirectory(at: original.appendingPathComponent("drive_c"),
+                            withIntermediateDirectories: true)
+
+    func makeWineserverSocket(for url: URL) -> URL? {
+        var st = stat()
+        guard stat(url.resolvingSymlinksInPath().path, &st) == 0 else { return nil }
+        let socketName = "server-" + String(UInt64(bitPattern: Int64(st.st_dev)), radix: 16)
+            + "-" + String(UInt64(st.st_ino), radix: 16)
+        let dir = URL(fileURLWithPath: "/tmp/.wine-\(getuid())/\(socketName)")
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        fm.createFile(atPath: dir.appendingPathComponent("socket").path, contents: nil)
+        return dir
+    }
+
+    let trashSocket = makeWineserverSocket(for: original)
+    defer { if let trashSocket { try? fm.removeItem(at: trashSocket) } }
+
+    let moved = prefixRoot.appendingPathComponent(".trash/gxdxmf-trashed-2026")
+    try? fm.createDirectory(at: moved.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try? fm.moveItem(at: original, to: moved)
+
+    switch BoxLock.destructiveGuard(moved) {
+    case .inUse(let detail):
+        h.check(detail.contains("wineserver"),
+                "D2: the guard sees a box in the .trash as in use and names the socket")
+    default:
+        h.check(false, "D2: a trashed box with a live wineserver must be in use "
+            + "(got \(BoxLock.destructiveGuard(moved)))")
+    }
+
+    // Una box senza wineserver è `proceed`; un URL inesistente è `unverified`
+    // (mai assumere che sia libera).
+    h.check(BoxLock.destructiveGuard(freeBox) == .proceed,
+            "D2: a box with no wineserver passes the guard")
+    let nonexistent = root.appendingPathComponent("boxes/does-not-exist")
+    h.check(BoxLock.destructiveGuard(nonexistent) == .unverified,
+            "D2: an unreadable path is 'unverified', never 'free'")
 }

@@ -51,4 +51,36 @@ func runLogChecks(_ h: Harness) {
     let (unlimited, _) = write(0, "unlimited.log")
     h.check(!unlimited.truncated, "cap 0 writes everything, never truncated")
     h.check(unlimited.written >= 6_000_000, "cap 0 still counts every byte (\(unlimited.written))")
+
+    // 4) D1: due `LogCap.default` per la stessa box nello stesso secondo hanno
+    //    path DIVERSI (pid + contatore monotono). Il difetto: il timestamp da un
+    //    secondo solo faceva scrivere due run sullo stesso file, e il primo log
+    //    spariva.
+    let cfg = Config(logsRoot: root.appendingPathComponent("logs").path)
+    let first = LogCap.default(config: cfg, box: "gxdxmf-box")
+    let second = LogCap.default(config: cfg, box: "gxdxmf-box")
+    h.check(first.path != second.path,
+            "two default log paths for the same box in the same second differ")
+    h.check(first.path.lastPathComponent.contains("-p"),
+            "the log name carries the pid: \(first.path.lastPathComponent)")
+    h.check(first.path.lastPathComponent != second.path.lastPathComponent,
+            "the file names are distinct, not just the full paths")
+
+    // 5) D1: `run` non tronca MAI in silenzio. Su un path esistente RIFIUTA per
+    //    nome (`ProcessError.logPathExists`) e lascia il file intatto.
+    let existing = root.appendingPathComponent("existing.log")
+    try? "ORIGINAL".write(to: existing, atomically: true, encoding: .utf8)
+    do {
+        _ = try LaunchLog.run(
+            "/bin/echo", ["hello"],
+            environment: ProcessInfo.processInfo.environment,
+            cap: LogCap(path: existing, capBytes: 1024))
+        h.check(false, "run must refuse to overwrite an existing log path")
+    } catch let ProcessError.logPathExists(path) {
+        h.check(path == existing.path, "the refusal names the existing path")
+        let text = (try? String(contentsOf: existing, encoding: .utf8)) ?? ""
+        h.equal(text, "ORIGINAL", "the existing file is left untouched")
+    } catch {
+        h.check(false, "run refused with the wrong error: \(error)")
+    }
 }

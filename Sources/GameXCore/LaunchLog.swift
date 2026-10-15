@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// Tetto di log per un lancio: dove scrivere e quanti byte al massimo.
 ///
@@ -15,15 +16,30 @@ public struct LogCap: Sendable, Equatable {
         self.capBytes = capBytes
     }
 
-    /// Tetto di default: `<logsRoot>/dxmf/<box>-<timestamp>.log` con il cap di
-    /// `config.dxmfLogCapMB` (default 512). Il percorso non è mai scelto in
-    /// silenzio: è quello stampato dal CLI.
+    /// Contatore monotono di processo: due `default` nello **stesso secondo**
+    /// devono avere nomi diversi (D1). Il lock lo rende atomico fra i thread.
+    private static let sequenceLock = NSLock()
+    private static var sequence: UInt64 = 0
+
+    private static func nextSequence() -> UInt64 {
+        sequenceLock.lock()
+        defer { sequenceLock.unlock() }
+        sequence += 1
+        return sequence
+    }
+
+    /// Tetto di default: `<logsRoot>/dxmf/<box>-<timestamp>-p<pid>-<n>.log` con il
+    /// cap di `config.dxmfLogCapMB` (default 512). Il timestamp ha granularità di
+    /// un secondo, quindi l'unicità viene da `pid` + contatore monotono: due run
+    /// concorrenti nello stesso secondo non scrivono lo stesso file (D1). Il
+    /// percorso non è mai scelto in silenzio: è quello stampato dal CLI.
     public static func `default`(config: Config, box: String) -> LogCap {
         let stamp = ISO8601DateFormatter().string(from: Date())
             .replacingOccurrences(of: ":", with: "-")
         let safeBox = box.replacingOccurrences(of: "/", with: "_")
         let dir = config.resolvedPaths().logsRoot.appendingPathComponent("dxmf")
-        return LogCap(path: dir.appendingPathComponent("\(safeBox)-\(stamp).log"),
+        let name = "\(safeBox)-\(stamp)-p\(getpid())-\(nextSequence()).log"
+        return LogCap(path: dir.appendingPathComponent(name),
                       capBytes: Int64(max(0, config.dxmfLogCapMB)) * 1_048_576)
     }
 }
@@ -73,11 +89,19 @@ public enum LaunchLog {
         }
         try FileManager.default.createDirectory(
             at: cap.path.deletingLastPathComponent(), withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: cap.path.path, contents: nil)
-        guard let handle = try? FileHandle(forWritingTo: cap.path) else {
-            throw ProcessError.launchFailed(executable,
-                                            "cannot open the log file \(cap.path.path)")
+        // Creazione **esclusiva**: `O_CREAT|O_EXCL` non tronca mai un file
+        // esistente. Se il path c'è già si **rifiuta per nome** (D1), invece di
+        // lasciare che il primo log sparisca in silenzio.
+        let fd = open(cap.path.path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
+        guard fd >= 0 else {
+            if errno == EEXIST {
+                throw ProcessError.logPathExists(cap.path.path)
+            }
+            throw ProcessError.launchFailed(
+                executable,
+                "cannot create the log file \(cap.path.path) (errno \(errno))")
         }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? handle.close() }
 
         let process = Process()
