@@ -514,4 +514,7 @@ do {
     h.check(DXMT.cacheGrewSinceWarmup(appid: appid, for: info), "cache grew -> warm-up needed")
 }
 
+// Igiene F002: lock per box (BoxLock) e orfani winedbg (Orphans).
+runHygieneChecks(h)
+
 exit(h.finish())
