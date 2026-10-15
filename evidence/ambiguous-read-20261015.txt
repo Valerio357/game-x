@@ -1,0 +1,29 @@
+# Evidenza: lettura ambigua del box (requisito 2) — 2026-10-15
+
+Comandi eseguiti in una sola shell, cwd=/Users/valerio.domenici/WinePrefixes
+
+## 1. il padre elenca il nome, con questi byte
+listdir != none: ['SekiroDXMF', 'dxmf-3d', 'DXMF-renderer', '.probe-abs']
+bytes dei nomi: [('SekiroDXMF', b'SekiroDXMF'), ('dxmf-3d', b'dxmf-3d'), ('DXMF-renderer', b'DXMF-renderer'), ('.probe-abs', b'.probe-abs')]
+
+## 2. lettura relativa
+$ cd ~/WinePrefixes && ls -d dxmf-3d   -> dxmf-3d            (RIESCE)
+$ cd ~/WinePrefixes && ls -d ./dxmf-3d -> ./dxmf-3d         (RIESCE)
+
+## 3. lettura assoluta, stessi byte
+$ ls -d /Users/valerio.domenici/WinePrefixes/dxfm-3d
+ls: /Users/valerio.domenici/WinePrefixes/dxfm-3d: No such file or directory   (FALLISCE)
+$ ls -d /Users/valerio.domenici/WinePrefixes/dxfm-3d/
+ls: /Users/valerio.domenici/WinePrefixes/dxfm-3d/: No such file or directory  (FALLISCE)
+$ python3 -c os.stat('/Users/valerio.domenici/WinePrefixes/dxfm-3d')
+os.stat -> errno=2 No such file or directory
+
+## 4. il percorso costruito dal glob riesce, con gli stessi byte
+$ stat ~/WinePrefixes/dxfm-3d    -> No such file or directory
+$ find ~/WinePrefixes -maxdepth 1 -name 'd*3d' -> /Users/valerio.domenici/WinePrefixes/dxfm-3d  (inode 44600083)
+
+## 5. conseguenza per gx
+Prefix.list() usa contentsOfDirectory -> MOSTRA il box.
+Prefix.find() usa fileExists(atPath: <assoluto>) -> NON LO TROVA.
+=> 'box list' elenca un box che 'box info' dichiara inesistente: risultato ambiguo.
+La stessa condizione si presenta mentre il prefix viene ricreato (updater/INSTALL).
