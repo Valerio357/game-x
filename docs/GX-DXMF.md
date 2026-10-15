@@ -32,6 +32,38 @@ con quella dei moduli (`11.10`): l'ABI `WINE_UNIX_CALL` è legata alla versione.
 con runtime GPTK 7.7 non carica i nostri moduli. `gx` deve **rifiutare con un messaggio
 chiaro** una coppia incompatibile, mai provarci.
 
+## 1-bis. Quale Wine può ospitare dxmf (misurato, non dedotto)
+
+Correzione architetturale del CEO (`2026-10-15`): `~/wine-d3dmetal` è una build
+**minimale** e **non può ospitare Steam**. Verificato sui binari, e il quadro è più
+stretto di così — servono **due capacità distinte** e nessuno dei due host le ha tutte:
+
+| host | versione | `WINEDLLPATH_PREPEND` (ntdll.so) | `macdrv_functions` (winemac.so) | freetype / MoltenVK / gnutls |
+| --- | --- | --- | --- | --- |
+| `~/wine-d3dmetal` | `wine-11.10` | **sì** | **sì** | **no** (0/0/0) |
+| `Wine Staging.app` | `wine-11.10 (Staging)` | **no** | **no** | sì (2/1/4) |
+| runtime `wine-dxmt` di gx | assente su questa macchina | — | — | — |
+
+Misure esatte: `nm -gU …/winemac.so | grep -c macdrv_functions`,
+`strings …/ntdll.so | grep -c WINEDLLPATH_PREPEND`, `find <root> -name lib{freetype,MoltenVK,gnutls}*`.
+
+**Conseguenza.** «Un solo wineserver» (host completo **e** patchato) non è ottenibile
+con gli host di oggi: Staging **non carica affatto** i nostri moduli (mancano entrambe le
+patch), `wine-d3dmetal` li carica ma non regge né la UI di Steam (freetype/MoltenVK) né
+il TLS. L'unico host che soddisfa entrambe le colonne è la build **completa + patchata**
+che `gx runtime install --from-source` produce (`scripts/build-wine-dxmt.sh`: Wine 11.10
++ le 3 patch CodeWeavers + `x64deps`), oggi non installata.
+
+Perciò `DXMF.Info` porta una **probe delle capacità dell'host**, e i rifiuti sono
+**due e distinti**, mai uno solo generico:
+
+- `versionMismatch` — major.minor dell'host ≠ pin dei moduli (`11.10`);
+- `hostCapabilities` — `WINEDLLPATH_PREPEND` assente, `macdrv_functions` assente,
+  librerie di sistema mancanti (`freetype`, `MoltenVK`, `gnutls`) ⇒ `canHostSteam`.
+
+Regola dxmf applicata: **capacità dichiarata == comportamento osservato**, e
+**rifiutare per nome, mai riparare in silenzio**.
+
 ## 2. API congelate per il blocco 1
 
 Il blocco 1 introduce **solo file nuovi** più i punti di innesto dichiarati: nessun
@@ -135,6 +167,26 @@ Regole: età > `staleAfterSeconds` (default **6 h**) **o** pid morto ⇒ `stale`
 
 ### `Sources/GameXCore/Orphans.swift` (nuovo) — igiene prima di un lancio
 
+*(F001b aggiunge a `DXMF` la probe delle capacità, sotto.)*
+
+```swift
+public struct HostCapabilities: Sendable, Equatable {
+    public let hasDllPathPrepend: Bool     // ntdll.so: WINEDLLPATH_PREPEND
+    public let hasMacdrvBridge: Bool       // winemac.so: macdrv_functions
+    public let systemLibraries: [String]   // trovate: freetype, MoltenVK, gnutls
+    public var canLoadDXMFModules: Bool    // le due patch
+    public var canHostSteam: Bool          // + le librerie di sistema
+    public var summary: String
+    public var refusal: String?            // perché no, nominato
+}
+public static func hostCapabilities(forBinary: String) -> HostCapabilities
+```
+
+Probe **senza eseguire Wine** (`nm`/`strings`/`find` sui file dell'host): deve poter
+girare anche su un host che non parte.
+
+### `Sources/GameXCore/Orphans.swift` (nuovo) — igiene prima di un lancio
+
 ```swift
 public enum Orphans {
     public struct Report: Sendable, Equatable {
@@ -179,6 +231,12 @@ gx dxmf modules <box>                       coppie (PE, unix) e pin, per la prov
 gx box create <name> --runtime dxmf         risolve a ~/wine-d3dmetal + stage, rifiuta la coppia incompatibile
 gx steam launch <box> <appid> --runtime dxmf
 ```
+
+**Steam non prende mai il contratto dxmf.** La UI di Steam compone in D3D11 via dxvk:
+`Steam.run/install/repair` rimuovono esplicitamente `WINEDLLPATH_PREPEND` e i moduli
+dxmf da `WINEDLLOVERRIDES` (restano gli override del prefix, cioè dxvk). Il contratto
+si applica **solo** al processo del gioco. È l'unico modo in cui le due cose convivono
+senza che nessuno debba ricordarsene.
 
 `gx steam launch <box> <appid> --runtime dxmf` con Steam **già avviato**: risolve l'exe
 del gioco dal `appmanifest_<appid>.acf`, poi lancio **diretto** dell'exe con il contratto

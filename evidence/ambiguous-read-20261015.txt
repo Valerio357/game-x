@@ -27,3 +27,16 @@ Prefix.list() usa contentsOfDirectory -> MOSTRA il box.
 Prefix.find() usa fileExists(atPath: <assoluto>) -> NON LO TROVA.
 => 'box list' elenca un box che 'box info' dichiara inesistente: risultato ambiguo.
 La stessa condizione si presenta mentre il prefix viene ricreato (updater/INSTALL).
+
+## 6. RI-MISURA (22:1x) — NON RIPRODUCE
+
+$ for n in dxmf-3d dxfm-3d; do 200 tentativi di stat/ls sul percorso ASSOLUTO; done
+dxmf-3d: 0/200 falliti
+dxfm-3d: 0/200 falliti
+listdir + stat di ciascun nome: stat OK per tutti e quattro i nomi.
+
+Conclusione onesta: la misura delle 21:5x e' un'OSSERVAZIONE non riprodotta.
+Possibile artefatto di misura (o una finestra transitoria del kernel mentre l'albero
+veniva toccato da un altro processo). NON e' un difetto accertato con causa nota.
+Resta valida come REGOLA DI PRODOTTO: un box risolto per enumerazione, e mai "not found"
+per un nome che il listino mostra; con il lock attivo, attendere o dichiarare "in ricostruzione".
