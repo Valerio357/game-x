@@ -43,6 +43,19 @@ La mia misura precedente (0/0/0) era di **22:0x** ed e' **stantia**: corretta in
 La cartella deps resta come **rete di sicurezza** (per un host che non le avesse), non come
 rimedio necessario. **Nessuna decisione residua su ESC-1.**
 
+## F006 — difetto trovato dal CEO usando `gx`: RISOLTO e provato
+
+Il lock copriva la **vita di un'applicazione** invece di una **mutazione**: `gx steam
+run` / `gx dxmf run` (Steam) restavano lockati, quindi la sequenza reale — Steam vivo + il
+gioco nella stessa box — era impossibile. Corretto: i run non prendono il lock (solo una
+verifica «nessuna mutazione in corso»), `--no-lock`/`--force` sono la valvola documentata,
+e una box **in uso** non si ricrea/rimuove senza `--force` (protezione dell'incidente da
+11,57 GB). Prova end-to-end con il CLI vero: `evidence/acceptance/lock-scope-e2e.sh`,
+**8/8 PASS**.
+
+Resta la sola cosa che è tua: **la run vera su una box con Steam e un gioco** (la tua
+`dxmf-run`), perché il box non è mio. Meccanismo provato; contenuto reale tuo.
+
 ## ESC-2 — l'accettazione «Steam parte e si vede» (decisione, non capacita')
 
 > Resa **piu' facile** dall'aggiornamento di ESC-1: l'host e' ora completo, quindi Steam e il

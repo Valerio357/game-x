@@ -40,6 +40,19 @@ enum Help {
           Mutating box commands take the per-box lock; --lock-wait SEC waits for it
           and --force breaks a live lock (naming the holder: pid, age, command, reason).
 
+        \(Out.bold("THE LOCK IS FOR MUTATIONS, NOT FOR RUNS"))
+          Mutations (box create/remove/purge, steam install/repair, deps install,
+          steam stop/box kill) hold the lock while they mutate.
+          RUNS (dxmf run, steam run, steam launch, box exec, game launch) do NOT
+          hold it: Steam stays open, the game is launched next to it. That is the
+          real sequence — Steam alive + game in the SAME box:
+              gx steam run  <box> &
+              gx dxmf run   <box> -- <game exe>
+          A run only *checks* that no mutation is in progress: --lock-wait SEC
+          waits for it, --no-lock (or --force) proceeds and says so.
+          Recreating/removing a box that is IN USE is refused, naming the
+          processes; --force overrides it.
+
         \(Out.bold("DXMF"))   (run a game under the dxmf D3D11/D3D9 modules)
           gx dxmf status [box]                  host+version, stage+modules, version pin+source,
                                                 host capabilities, resolved deps folder and which

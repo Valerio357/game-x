@@ -650,4 +650,5 @@ runPrefixChecks(h)
 // F003: il tetto di log (LaunchLog).
 runLogChecks(h)
 
+runLockScopeChecks(h)
 exit(h.finish())

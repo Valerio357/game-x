@@ -176,6 +176,51 @@ func withBoxLock<T>(
     return try body()
 }
 
+/// Una box **in uso** non si ricrea e non si rimuove per sbaglio.
+///
+/// E' la protezione dell'incidente che avrebbe potuto costare 11,57 GB: un
+/// `box create` su una box **piena e con processi vivi**. Rifiuta **nominando** i
+/// processi; `--force` procede (dichiarandolo). Se la verifica non e' possibile
+/// (`verified == false`) lo **dice** invece di assumere che sia libera.
+func guardDestructive(_ box: String, paths: Paths, flags: [String: String], action: String) {
+    guard let record = Prefix.find(box, paths: paths) else { return }   // non esiste: nulla da proteggere
+    let use = BoxLock.prefixInUse(prefix: record.url)
+    if !use.verified {
+        Out.print(Out.yellow("warning: could not verify whether '\(box)' is in use — proceeding"))
+        return
+    }
+    guard use.inUse else { return }
+    if flags["force"] != nil {
+        Out.print(Out.yellow("warning: \(action) '\(box)' while it is in use: \(use.description)"))
+        return
+    }
+    fail(.denied("box '\(box)' is in use: \(use.description)\n"
+                 + "  stop it first (gx box kill \(box), gx steam stop \(box)), "
+                 + "or pass --force to \(action) it anyway\n"
+                 + "  (a crash can leave an orphan socket: --force is the escape hatch)"))
+}
+
+/// Un **lancio** non prende il lock: verifica solo che una MUTAZIONE non sia in
+/// corso. Il lock è per le operazioni che *mutano* la box (create/remove/purge,
+/// steam install/repair, deps install), **non** per la durata di un'applicazione
+/// che per progetto resta aperta — altrimenti `gx steam run` (Steam vivo) +
+/// `gx dxmf run <box> -- <gioco>` sarebbe impossibile, ed è il caso d'uso reale.
+/// `--lock-wait SEC` attende la fine della mutazione; `--no-lock`/`--force`
+/// proseguono dichiarandolo (valvola di sfogo, esplicita).
+func ensureLaunchAllowed(
+    _ box: String, _ config: Config, flags: [String: String]
+) throws {
+    let wait = TimeInterval(flags["lock-wait"] ?? "") ?? 0
+    let bypass = flags["no-lock"] != nil || flags["force"] != nil
+    try BoxLock.allowsLaunch(
+        box: box, config: config, wait: wait, force: bypass,
+        onWait: { holder, total in
+            Out.print(Out.dim("waiting up to \(Int(total))s for the mutation on '\(box)' to finish "
+                              + "(pid \(holder.pid), \(holder.command))"))
+        },
+        warn: { Out.print(Out.yellow($0)) })
+}
+
 /// Acquisisce il lock o esce con un rifiuto che nomina pid/età/command/reason.
 private func lockOrFail(
     box: String, config: Config, command: String, reason: String,
@@ -652,6 +697,7 @@ func cmdPrefix(_ args: [String]) {
             fail(.denied(reason))
         }
         do {
+            guardDestructive(name, paths: paths, flags: flags, action: "recreate")
             try withBoxLock(name, config,
                             command: "gx box create \(name)",
                             reason: "create", flags: flags) {
@@ -675,6 +721,7 @@ func cmdPrefix(_ args: [String]) {
             fail(.usage("removing '\(name)' requires --yes (saves may be lost)"))
         }
         do {
+            guardDestructive(name, paths: paths, flags: flags, action: "remove")
             try withBoxLock(name, config,
                             command: "gx box remove \(name)",
                             reason: "remove", flags: flags) {
@@ -728,6 +775,7 @@ func cmdPrefix(_ args: [String]) {
         if command.first == "--" { command.removeFirst() }
         guard !command.isEmpty else { fail(.usage("no command to run")) }
         do {
+            try ensureLaunchAllowed(name, config, flags: flags)
             // Su un box **dxmf** anche `box exec` porta il contratto d'ambiente:
             // e' il percorso che il progetto documenta come «gioco diretto, senza
             // Steam» (`dxmf/DXMF.md` §4.5). Senza, in un box con dxvk il programma
@@ -958,14 +1006,12 @@ func cmdSteam(_ args: [String]) {
         guard b.hasSteam else { fail(.notInstalled("Steam not found in box '\(name)'")) }
         let rt = runtimeForSteam(b, config: config, override: flags["runtime"])
         do {
-            let code = try withBoxLock(name, config, command: "gx steam run \(name)",
-                                       reason: "steam run", flags: flags) {
-                let safe = libraryConfig(config)
-                let result = try Steam.run(prefix: b, config: safe, runtime: rt,
-                                           progress: { Out.print("  \($0)") })
-                return result.exitCode
-            }
-            exit(code)
+            // La UI di Steam resta aperta: **non** prende il lock (difetto del 2026-10-15).
+            try ensureLaunchAllowed(name, config, flags: flags)
+            let safe = libraryConfig(config)
+            let result = try Steam.run(prefix: b, config: safe, runtime: rt,
+                                       progress: { Out.print("  \($0)") })
+            exit(result.exitCode)
         } catch { fail(.denied("\(error)")) }
 
     case "launch":
@@ -975,16 +1021,13 @@ func cmdSteam(_ args: [String]) {
         // `--exe` esplicito vince sulla risoluzione (che rifiuta se i candidati sono più d'uno).
         let explicitExe = flags["exe"].map { URL(fileURLWithPath: Paths.expand($0)) }
         do {
-            let code = try withBoxLock(pos[0], config, command: "gx steam launch \(pos[0]) \(pos[1])",
-                                       reason: "steam launch", flags: flags) {
-                let safe = libraryConfig(config)
-                let result = try Steam.launch(appid: pos[1], prefix: b, config: safe, runtime: rt,
-                                              exe: explicitExe,
-                                              warmupIfCold: flags["no-warmup"] == nil,
-                                              progress: { Out.print("  \($0)") })
-                return result.exitCode
-            }
-            exit(code)
+            try ensureLaunchAllowed(pos[0], config, flags: flags)
+            let safe = libraryConfig(config)
+            let result = try Steam.launch(appid: pos[1], prefix: b, config: safe, runtime: rt,
+                                          exe: explicitExe,
+                                          warmupIfCold: flags["no-warmup"] == nil,
+                                          progress: { Out.print("  \($0)") })
+            exit(result.exitCode)
         } catch { fail(.denied("\(error)")) }
 
     case "warmup", "precompile":
@@ -1172,15 +1215,10 @@ func cmdDXMFRun(_ args: [String]) {
     }
 
     do {
-        let code = try withBoxLock(
-            boxName, config,
-            command: "gx dxmf run \(boxName)",
-            reason: "dxmf run",
-            flags: flags
-        ) {
-            try dxmfRunLocked(boxName: boxName, config: config, paths: paths,
-                              flags: flags, command: command)
-        }
+        // Il gioco e Steam restano aperti: **non** si tiene il lock per la loro vita.
+        try ensureLaunchAllowed(boxName, config, flags: flags)
+        let code = try dxmfRunBody(boxName: boxName, config: config, paths: paths,
+                                   flags: flags, command: command)
         exit(code)
     } catch let error as CLIError {
         fail(error)
@@ -1189,9 +1227,10 @@ func cmdDXMFRun(_ args: [String]) {
     }
 }
 
-/// Corpo di `dxmf run`, eseguito con il lock già tenuto. Non chiama mai `fail`
-/// (che uscirebbe saltando il `defer` del lock): lancia `CLIError`.
-func dxmfRunLocked(
+/// Corpo di `dxmf run`. Il lock di mutazione **non** è tenuto (un gioco resta
+/// aperto): `ensureLaunchAllowed` ha solo verificato che nessuno stia mutando la
+/// box. Non chiama mai `fail`: lancia `CLIError`.
+func dxmfRunBody(
     boxName: String, config: Config, paths: Paths,
     flags: [String: String], command: [String]
 ) throws -> Int32 {
@@ -1416,6 +1455,7 @@ func cmdGame(_ args: [String]) {
             } catch { fail(.denied("\(error)")) }
         }
         do {
+            try ensureLaunchAllowed(b.name, config, flags: flags)
             Out.print("launching '\(entry.name)'…")
             let result = try GameLauncher.launch(entry, config: config, paths: paths, runtime: rt)
             if !result.stdout.isEmpty { FileHandle.standardOutput.write(Data(result.stdout.utf8)) }

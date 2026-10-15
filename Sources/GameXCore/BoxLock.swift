@@ -130,6 +130,93 @@ public enum BoxLock {
         case stale(BoxLockInfo)       // holder morto o troppo vecchio
     }
 
+    /// Un **lancio** (la UI di Steam, un gioco, un programma in `box exec`) è un
+    /// processo di **lunga vita**: NON prende il lock di mutazione. Prenderlo
+    /// renderebbe impossibile il caso d'uso principale — la sequenza reale
+    /// `gx steam run` (Steam vivo) + `gx dxmf run <box> -- <gioco>`, dove il gioco
+    /// ha bisogno dell'handshake SteamAPI con Steam **già in esecuzione**.
+    /// (Difetto trovato dal CEO il 2026-10-15 usando `gx` sul binario mergiato.)
+    ///
+    /// Un lancio prende solo una **decisione**: una MUTAZIONE è in corso? Se sì
+    /// rifiuta (o attende `wait`, o prosegue con `force`/`--no-lock` e lo dichiara).
+    public static func allowsLaunch(
+        box: String,
+        config: Config,
+        wait: TimeInterval = 0,
+        force: Bool = false,
+        onWait: (BoxLockInfo, TimeInterval) -> Void = { _, _ in },
+        warn: (String) -> Void = { _ in }
+    ) throws {
+        let deadline = Date().addingTimeInterval(wait)
+        var announced = false
+        while true {
+            switch state(box: box, config: config) {
+            case .free, .stale:
+                return
+            case .held(let holder):
+                if force {
+                    warn("launching while a mutation is in progress on '\(box)': \(holder)")
+                    return
+                }
+                if Date() >= deadline {
+                    throw LockError.heldBy(holder)
+                }
+                if !announced { onWait(holder, wait); announced = true }
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+    }
+
+    /// La box è **in uso**?
+    ///
+    /// Segnale: il **socket del wineserver di quel prefix**, in
+    /// `/tmp/.wine-<uid>/server-<devhex>-<inohex>/socket` (Wine lo deriva da
+    /// `st_dev`/`st_ino` del `WINEPREFIX`). Verificato su questa macchina:
+    /// presente mentre un wineserver vive, **sparito** dopo `wineserver -k`, e
+    /// assente per un prefix mai avviato.
+    ///
+    /// Perché non `ps eww`: su macOS **non stampa l'ambiente** (provato: l'unico
+    /// match era il `grep` stesso), quindi attribuire un processo a una box
+    /// leggendo `WINEPREFIX` **non è possibile**, e un filtro per nome
+    /// (`pgrep -f wine`) mancherebbe proprio i processi del gioco
+    /// (`C:\...\Steam.exe`, `...PlagueProject-Win64-Shipping.exe`).
+    ///
+    /// Limite dichiarato: un **crash** può lasciare il socket orfano; il
+    /// messaggio lo dice e `--force` è la valvola. `verified == false` significa
+    /// «non ho potuto guardare», mai «libera».
+    public struct PrefixUse: Sendable, Equatable {
+        public let inUse: Bool
+        public let verified: Bool
+        public let socketPath: String?
+        public var description: String {
+            guard verified else { return "could not determine whether the box is in use" }
+            guard let socketPath else { return "no running wineserver for this box" }
+            return "a wineserver is running for this box (\(socketPath))"
+        }
+        public init(inUse: Bool, verified: Bool, socketPath: String?) {
+            self.inUse = inUse
+            self.verified = verified
+            self.socketPath = socketPath
+        }
+    }
+
+    public static func prefixInUse(prefix: URL) -> PrefixUse {
+        let uid = getuid()
+        var dev: UInt64 = 0, ino: UInt64 = 0
+        var st = stat()
+        guard stat(prefix.resolvingSymlinksInPath().path, &st) == 0 else {
+            return PrefixUse(inUse: false, verified: false, socketPath: nil)
+        }
+        dev = UInt64(bitPattern: Int64(st.st_dev))
+        ino = UInt64(st.st_ino)
+        let name = "server-" + String(dev, radix: 16) + "-" + String(ino, radix: 16)
+        let socket = "/tmp/.wine-\(uid)/\(name)/socket"
+        let exists = FileManager.default.fileExists(atPath: socket)
+            || FileManager.default.fileExists(atPath: socket + "/")
+        return PrefixUse(inUse: exists, verified: true, socketPath: exists ? socket : nil)
+    }
+
+
     public enum LockError: Error, CustomStringConvertible {
         case heldBy(BoxLockInfo)
         case timedOut(BoxLockInfo?, TimeInterval)

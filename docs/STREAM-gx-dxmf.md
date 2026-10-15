@@ -21,6 +21,7 @@ Design e API congelate: `docs/GX-DXMF.md`.
 | F003 | CLI: `gx dxmf run/status/modules`, flag diagnostica, tetto di log, lock su ogni mutazione | `Sources/gx/main.swift`, `Sources/gx/Help.swift`, `Sources/GameXCore/LaunchLog.swift` (nuovo) | W3 | **validato** (VAL1 6/6 PASS) | `b7c214f` |
 | F004 | Innesti: prefix lock-aware, find per enumerazione, Steam su dxvk + gioco su dxmf, doctor | `Sources/GameXCore/Prefix.swift`, `Steam.swift`, `Doctor.swift` | W4 | **validato** (VAL1 6/6 PASS) | `77542a3` |
 | F005 | Validazione indipendente + accettazione (lsof) + correzione D1 | `evidence/`, `GameLauncher.swift` | ORCH + VAL1/VAL2 | **VALID1 6/6 PASS · VAL2 5/5 PASS**; D1 corretto e testato; accettazione giocata = CEO | — |
+| F006 | **Lock di MUTAZIONE, non di vita** (difetto trovato dal CEO usando `gx`) | `BoxLock.swift`, `main.swift`, `Help.swift`, e2e | ORCH + VAL3 | fix + prova e2e **PASS 8/8** | — |
 
 ## Verifica (criterio di riuscita)
 
@@ -46,6 +47,38 @@ stata **read-only**: nessun comando `gx`, nessuna scrittura in `~/WinePrefixes` 
 `~/wine-d3dmetal` o nel repo dxmf. I due WORKER del blocco 1 non hanno toccato nessun
 prefix (verificato: zero occorrenze di `gx box|steam|deps`, `wineboot`, `WinePrefixes/*`
 nei loro log).
+
+## F006 — il lock era troppo grande (difetto di prodotto, trovato dal CEO)
+
+**Sintomo reale**: `gx dxmf run dxmf-run -- steam.exe` partiva e **teneva il lock per
+tutta la vita di Steam**; il comando successivo — il **gioco**, che ha bisogno di Steam
+vivo per l'handshake SteamAPI — veniva rifiutato (`box ... is locked by pid ...`).
+La sequenza principale del prodotto era **impossibile**, e non c'era una valvola.
+
+**Causa**: il lock era stato pensato per «comando lungo = comando mutante». Falso: un
+**run** è un processo che per progetto resta aperto; una **mutazione** è
+create/remove/purge, steam install/repair, deps install, stop/kill.
+
+**Fix**:
+1. i **run** (`dxmf run`, `steam run`, `steam launch`, `box exec`, `game launch`) **non
+   prendono il lock**: chiamano `BoxLock.allowsLaunch`, che *decide* soltanto se una
+   mutazione è in corso (rifiuta, o attende `--lock-wait`);
+2. `--no-lock` (e `--force`) sono la **valvola documentata**, e dichiarano cosa stanno
+   scavalcando;
+3. **protezione dell'incidente da 11,57 GB**: `box create`/`remove`/`purge` su una box
+   **in uso** sono rifiutati, nominando il socket del wineserver che lo prova
+   (`BoxLock.prefixInUse`), con `--force` come sfogo dichiarato;
+4. **test e2e della sequenza reale**: `evidence/acceptance/lock-scope-e2e.sh` — 8/8 PASS
+   con il CLI vero (Steam vivo + gioco insieme; nessun lock durante il run; mutazione
+   che rifiuta il lancio).
+
+**Due difetti miei trovati dai miei stessi test mentre implementavo la guardia**, e per
+questo la guardia oggi è diversa da come l'avevo scritta: (i) filtravo i processi con
+`pgrep -f wine`, che **manca proprio i processi del gioco** (`C:\...\Steam.exe` non
+contiene "wine"); (ii) leggevo `WINEPREFIX` dall'ambiente con `ps eww`, che **su macOS
+non stampa l'ambiente** (l'unico match era il `grep` stesso). Il segnale usato è ora il
+**socket del wineserver del prefix**, verificato: presente mentre vive, sparito dopo
+`wineserver -k`, assente per un prefix mai avviato.
 
 ## Limite di metodo del VALIDATOR (registrato per non leggerlo come una prova)
 
