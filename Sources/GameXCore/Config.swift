@@ -22,6 +22,9 @@ public struct Config: Sendable {
     public var dxmfLockDir: String
     public var dxmfGateLockWait: Int
     public var dxmfLogCapMB: Int
+    /// Cartella delle dylib di supporto per il runtime dxmf (`DYLD_LIBRARY_PATH`).
+    /// Vuoto = `<runtimeRoot>/x64deps`, altrimenti `~/x64deps`.
+    public var dxmfDeps: String
 
     public init(
         prefixRoot: String = DefaultPaths.prefixRoot,
@@ -41,7 +44,8 @@ public struct Config: Sendable {
         dxmfStage: String = "",
         dxmfLockDir: String = "",
         dxmfGateLockWait: Int = 0,
-        dxmfLogCapMB: Int = 512
+        dxmfLogCapMB: Int = 512,
+        dxmfDeps: String = ""
     ) {
         self.prefixRoot = prefixRoot
         self.gamesRoot = gamesRoot
@@ -61,6 +65,7 @@ public struct Config: Sendable {
         self.dxmfLockDir = dxmfLockDir
         self.dxmfGateLockWait = dxmfGateLockWait
         self.dxmfLogCapMB = dxmfLogCapMB
+        self.dxmfDeps = dxmfDeps
     }
 
     /// Risolve la configurazione: default → file → ambiente.
@@ -95,6 +100,7 @@ public struct Config: Sendable {
         if let v = environment["GX_DXMF_LOG_CAP_MB"], let n = Int(v) {
             config.dxmfLogCapMB = n
         }
+        if let v = environment["GX_DXMF_DEPS"] { config.dxmfDeps = v }
 
         return config
     }
@@ -178,6 +184,7 @@ private func applyTOML(_ text: String, to config: inout Config) {
         case "dxmf.lock_dir": config.dxmfLockDir = entry.value
         case "dxmf.gate_lock_wait": if let n = Int(entry.value) { config.dxmfGateLockWait = n }
         case "dxmf.log_cap_mb": if let n = Int(entry.value) { config.dxmfLogCapMB = n }
+        case "dxmf.deps": config.dxmfDeps = entry.value
         default: break
         }
     }

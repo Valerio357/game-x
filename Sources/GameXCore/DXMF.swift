@@ -42,7 +42,7 @@ public enum DXMF {
             pinnedVersion: String?,
             wineMajor: Int? = nil,
             pinSource: String? = nil,
-            hostCapabilities: HostCapabilities
+            hostCapabilities: HostCapabilities? = nil
         ) {
             self.wineBinary = wineBinary
             self.runtimeRoot = runtimeRoot
@@ -52,7 +52,9 @@ public enum DXMF {
             self.pinnedVersion = pinnedVersion
             self.wineMajor = wineMajor ?? Runtime.parseMajor(from: wineVersion)
             self.pinSource = pinSource
-            self.hostCapabilities = hostCapabilities
+            // Default sorgente-compatibile: se il chiamante non la passa, la probe
+            // la fa `discover`. Mai un default "tutto ok" inventato.
+            self.hostCapabilities = hostCapabilities ?? DXMF.hostCapabilities(forBinary: wineBinary)
         }
 
         /// Perché questo runtime non è utilizzabile (nil se lo è).
@@ -114,17 +116,23 @@ public enum DXMF {
         public var frameLog: URL?       // DXMF_FRAME_TIME
         public var lockDir: String?     // DXMF_LOCK_DIR
         public var gateLockWait: Int?   // DXMF_GATE_LOCK_WAIT
+        /// Cartella delle dylib di supporto (`DYLD_LIBRARY_PATH`): freetype,
+        /// gnutls, MoltenVK. È ciò che rende il NOSTRO host patchato capace di
+        /// tenere viva anche la UI di Steam, senza cambiare Wine.
+        public var depsDir: URL?
 
         public init(
             quiet: Bool = true,
             frameLog: URL? = nil,
             lockDir: String? = nil,
-            gateLockWait: Int? = nil
+            gateLockWait: Int? = nil,
+            depsDir: URL? = nil
         ) {
             self.quiet = quiet
             self.frameLog = frameLog
             self.lockDir = lockDir
             self.gateLockWait = gateLockWait
+            self.depsDir = depsDir
         }
     }
 
@@ -174,8 +182,12 @@ public enum DXMF {
         public var refusal: String? {
             guard !canLoadDXMFModules else { return nil }
             return "host Wine cannot load dxmf modules: \(missingPatches.joined(separator: "; ")). "
-                + "A complete + patched host comes from `gx runtime install --from-source` "
-                + "(Wine \(DXMF.pinnedWineVersion) + the 3 CodeWeavers patches + x64deps)"
+                + "A complete patched host is the SAME host with the system libraries "
+                + "reachable: point `GX_DXMF_DEPS` (or `[dxmf] deps`) at a folder holding "
+                + "freetype, MoltenVK and gnutls, or build the runtime with "
+                + "`gx runtime install --from-source`. Do NOT switch to stock Wine: it "
+                + "lacks the two CodeWeavers patches and the modules do not load at all "
+                + "(`ERROR_MOD_NOT_FOUND`, 126)"
         }
 
         static let requiredLibraries = ["freetype", "MoltenVK", "gnutls"]
@@ -421,6 +433,18 @@ public enum DXMF {
         }
         env["WINEDLLOVERRIDES"] = overrides
 
+        // Le dylib di supporto: Wine le cerca con SONAME nudo
+        // (`libfreetype.6.dylib`, `libgnutls.30.dylib`, `libMoltenVK.dylib`),
+        // quindi serve la cartella in DYLD_LIBRARY_PATH (stesso meccanismo di
+        // `x64deps` del runtime DXMT).
+        if let depsDir = diagnostics.depsDir, FileManager.default.fileExists(atPath: depsDir.path) {
+            var path = depsDir.path
+            if let existing = ProcessInfo.processInfo.environment["DYLD_LIBRARY_PATH"], !existing.isEmpty {
+                path += ":" + existing
+            }
+            env["DYLD_LIBRARY_PATH"] = path
+        }
+
         if diagnostics.quiet { env["DXMF_DIAG_QUIET"] = "1" }
         if let frameLog = diagnostics.frameLog { env["DXMF_FRAME_TIME"] = frameLog.path }
         if let lockDir = diagnostics.lockDir, !lockDir.isEmpty { env["DXMF_LOCK_DIR"] = lockDir }
@@ -428,6 +452,23 @@ public enum DXMF {
 
         for (key, value) in extra { env[key] = value }
         return env
+    }
+
+    /// Da dove arrivano le dylib di supporto, in ordine: `[dxmf] deps`/`GX_DXMF_DEPS`
+    /// esplicito → `<runtimeRoot>/x64deps` (convenzione del runtime DXMT) →
+    /// `~/x64deps` (convenzione della build del runtime). `nil` = nessuna.
+    public static func resolveDepsDir(config: Config, runtimeRoot: URL? = nil) -> URL? {
+        let fm = FileManager.default
+        if !config.dxmfDeps.isEmpty {
+            let url = url(config.dxmfDeps)
+            return fm.fileExists(atPath: url.path) ? url : nil
+        }
+        if let runtimeRoot {
+            let bundled = runtimeRoot.appendingPathComponent("x64deps")
+            if fm.fileExists(atPath: bundled.path) { return bundled }
+        }
+        let shared = url("~/x64deps")
+        return fm.fileExists(atPath: shared.path) ? shared : nil
     }
 
     /// Coppie (PE, unix) dei moduli presenti: la prova che i moduli sono i

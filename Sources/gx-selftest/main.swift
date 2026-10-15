@@ -165,6 +165,20 @@ do {
                                 extra: ["WINEDLLPATH_PREPEND": "/override"])
     h.equal(env3["WINEDLLPATH_PREPEND"], "/override", "extra wins")
 
+    // dylib di supporto: esistono solo se la cartella esiste davvero.
+    let depsDir = root.appendingPathComponent("x64deps")
+    try? FileManager.default.createDirectory(at: depsDir, withIntermediateDirectories: true)
+    let envDeps = DXMF.environment(for: info, diagnostics: DXMF.Diagnostics(depsDir: depsDir))
+    h.check((envDeps["DYLD_LIBRARY_PATH"] ?? "").contains(depsDir.path),
+            "depsDir present → DYLD_LIBRARY_PATH")
+    let envNoDeps = DXMF.environment(
+        for: info,
+        diagnostics: DXMF.Diagnostics(depsDir: root.appendingPathComponent("missing-deps")))
+    h.check(envNoDeps["DYLD_LIBRARY_PATH"] == nil,
+            "a deps folder that does not exist is not declared")
+    h.equal(DXMF.resolveDepsDir(config: Config(dxmfDeps: depsDir.path))?.path, depsDir.path,
+            "resolveDepsDir honours the explicit config")
+
     // Il muro: host wine-7.7 con pin 11.10 → mismatch nominato + non usabile.
     let oldHost = makeHost("wine-gptk-77", declared: "wine-7.7")
     let oldCfg = Config(dxmfWineRoot: oldHost.path, dxmfStage: stage.path)
