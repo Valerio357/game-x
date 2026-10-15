@@ -1,0 +1,2 @@
+box 'gxdxmf-acc' ready → /var/folders/gr/n1v9vpz528sg2d5fp1vh6vb00000gn/T/gxdxmf-acc-W3oP2x/boxes/gxdxmf-acc
+   runtime: Game-X Wine+DXMF — wine-11.10 [wine]

@@ -1,0 +1,96 @@
+=== pid 2956   2026-10-15T20:45:18Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 2956   2026-10-15T20:45:19Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 2956   2026-10-15T20:45:20Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:20Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-unix/wine /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 2956   2026-10-15T20:45:21Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:21Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:22Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:22Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:23Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:23Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:24Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:24Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:25Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:25Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:26Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:26Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:27Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:27Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:29Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:29Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:30Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:30Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:31Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:31Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:32Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:32Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:33Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 3009   2026-10-15T20:45:33Z
+  PID  PPID 
+ 3009  2956 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
+=== pid 2956   2026-10-15T20:45:34Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 2956   2026-10-15T20:45:35Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 2956   2026-10-15T20:45:36Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 2956   2026-10-15T20:45:37Z
+  PID  PPID 
+ 2956 98785 /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe

@@ -1,0 +1,2 @@
+[unix:dxgi] image=/Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-unix/dxgi.so
+[unix:d3d11] image=/Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-unix/d3d11.so

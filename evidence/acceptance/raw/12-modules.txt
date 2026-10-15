@@ -1,0 +1,7 @@
+dxmf modules (/Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine)
+d3d11
+  pe              : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-windows/d3d11.dll  sha256 9967979c03a9673543a50adf0022f857561911158b499b005547a0cfcb4179fc
+  unix            : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-unix/d3d11.so  sha256 136b2ff01788ab947a7fdc3734aebc222778923a16b96bcc1bfc29f5be8939c8
+dxgi
+  pe              : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-windows/dxgi.dll  sha256 4e4336f81e354c44a79566df2a51a80d6cb8082e6957b1d19a7851d66c945d35
+  unix            : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-unix/dxgi.so  sha256 ae66a2715c6bd1aa2a243d548cf799de7c58ba0283255817890a56eca0392bbf

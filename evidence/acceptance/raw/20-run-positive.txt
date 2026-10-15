@@ -1,0 +1,11 @@
+[2026-10-15 22:45:18] INFO : gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+winedbg orphans: 0 (processes 608 of 2666)
+stage: /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine
+modules: d3d11,dxgi
+deps: /Users/valerio.domenici/x64deps (freetype, MoltenVK, gnutls)
+exit: 0
+log: /var/folders/gr/n1v9vpz528sg2d5fp1vh6vb00000gn/T/gxdxmf-acc-W3oP2x/logs/dxmf/gxdxmf-acc-2026-10-15T20-45-19Z.log
+written: 411032 bytes
+du: 462848 bytes
+truncated: no
+exit=0

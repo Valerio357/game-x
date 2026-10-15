@@ -1,0 +1,10 @@
+dxmf runtime
+  host            : /Users/valerio.domenici/wine-d3dmetal/bin/wine
+  wine version    : wine-11.10
+  stage           : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine
+  modules         : d3d11,dxgi
+  pin             : 11.10 (default)
+  capabilities    : dxmf modules: loadable; Steam: hostable (freetype, MoltenVK, gnutls)
+  deps            : /Users/valerio.domenici/x64deps (freetype, MoltenVK, gnutls)
+  log cap         : 512 MB (measured with du)
+  winedbg orphans : 0

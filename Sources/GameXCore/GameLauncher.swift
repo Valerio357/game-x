@@ -62,6 +62,17 @@ public enum GameLauncher {
         guard let prefix = Prefix.find(plan.prefixName, paths: paths) else {
             throw LaunchError.prefixMissing(entry.name, entry.prefix)
         }
+        // Runtime dxmf: il gioco deve nascere con il **nostro** contratto
+        // d'ambiente (`WINEDLLPATH_PREPEND` + `d3d9,d3d11,dxgi=b`), altrimenti in un
+        // box con dxvk muore all'import (`STATUS_DLL_NOT_FOUND`, 0xC0000135) prima di
+        // qualunque nostro codice. `gx game launch` era l'unico percorso che lo
+        // dimenticava (rilievo D1 del VALIDATOR).
+        if let info = runtime.dxmf {
+            let env = Prefix.dxmfLaunchEnvironment(
+                config: config, prefix: prefix.url, info: info,
+                diagnostics: Steam.dxmfDiagnostics(from: config), extra: plan.env)
+            return try ProcessRunner.run(runtime.wineBinary, plan.args, environment: env)
+        }
         return try Prefix.exec(
             prefix,
             command: plan.args,

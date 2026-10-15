@@ -18,9 +18,9 @@ Design e API congelate: `docs/GX-DXMF.md`.
 | F001 | Runtime `dxmf` di prima classe (host+stage, pin di versione, contratto d'ambiente) | `Sources/GameXCore/DXMF.swift` (nuovo), `Runtime.swift`, `Config.swift` | W1 | **validato internamente** (build ok, 143/143 selftest) | `be92ee1` |
 | F002 | Igiene: lock per box + orfani `winedbg` | `Sources/GameXCore/BoxLock.swift`, `Sources/GameXCore/Orphans.swift` (nuovi) | W2 | **validato internamente** (build ok, 143/143 selftest) | `a2250f8` |
 | F001b | Probe delle capacità dell'host (le 2 patch + le librerie di sistema) | `Sources/GameXCore/DXMF.swift`, selftest | W1b | pending | — |
-| F003 | CLI: `gx dxmf run/status/modules`, flag diagnostica e tetto di log | `Sources/gx/main.swift`, `Sources/gx/Help.swift` | W3 | pending (dipende da F001) | — |
-| F004 | Innesti: prefix lock-aware, Steam su dxvk + gioco su dxmf, doctor | `Sources/GameXCore/Prefix.swift`, `Steam.swift`, `Doctor.swift` | W4 | pending (dipende da F001) | — |
-| F005 | Validazione indipendente + accettazione reale (lsof) | `evidence/` | ORCH + VAL1/VAL2 | pending | — |
+| F003 | CLI: `gx dxmf run/status/modules`, flag diagnostica, tetto di log, lock su ogni mutazione | `Sources/gx/main.swift`, `Sources/gx/Help.swift`, `Sources/GameXCore/LaunchLog.swift` (nuovo) | W3 | **validato** (VAL1 6/6 PASS) | `b7c214f` |
+| F004 | Innesti: prefix lock-aware, find per enumerazione, Steam su dxvk + gioco su dxmf, doctor | `Sources/GameXCore/Prefix.swift`, `Steam.swift`, `Doctor.swift` | W4 | **validato** (VAL1 6/6 PASS) | `77542a3` |
+| F005 | Validazione indipendente + accettazione (lsof) + correzione D1 | `evidence/`, `GameLauncher.swift` | ORCH + VAL1/VAL2 | **VALID1 6/6 PASS · VAL2 5/5 PASS**; D1 corretto e testato; accettazione giocata = CEO | — |
 
 ## Verifica (criterio di riuscita)
 

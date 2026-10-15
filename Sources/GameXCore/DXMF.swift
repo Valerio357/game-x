@@ -507,3 +507,28 @@ public enum DXMF {
         return (major, minor)
     }
 }
+
+    /// La diagnostica derivata dalla `Config`, in un posto solo: così ogni
+    /// percorso di lancio (CLI, Steam, `game launch`) porta le **stesse**
+    /// variabili — in particolare la cartella deps, che è ciò che rende il
+    /// nostro host patchato capace di tenere viva anche la UI di Steam.
+
+/// La diagnostica derivata dalla `Config`, in un posto solo: così ogni percorso di
+/// lancio (CLI, Steam, `game launch`) porta le **stesse** variabili — in particolare
+/// la cartella deps, che è ciò che rende il nostro host patchato capace di tenere
+/// viva anche la UI di Steam.
+extension DXMF.Diagnostics {
+    public static func defaults(
+        config: Config,
+        quiet: Bool = true,
+        frameLog: URL? = nil,
+        runtimeRoot: URL? = nil
+    ) -> DXMF.Diagnostics {
+        DXMF.Diagnostics(
+            quiet: quiet,
+            frameLog: frameLog,
+            lockDir: config.dxmfLockDir.isEmpty ? nil : config.dxmfLockDir,
+            gateLockWait: config.dxmfGateLockWait > 0 ? config.dxmfGateLockWait : nil,
+            depsDir: DXMF.resolveDepsDir(config: config, runtimeRoot: runtimeRoot))
+    }
+}

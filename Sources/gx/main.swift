@@ -1219,14 +1219,12 @@ func dxmfRunLocked(
     }
 
     // Diagnostica: quiet di default; --verbose/--debug la accendono; --frame-log la espone.
-    let quiet = !globalDebugRequested()
-    let depsDir = DXMF.resolveDepsDir(config: config, runtimeRoot: info.runtimeRoot)
-    let diagnostics = DXMF.Diagnostics(
-        quiet: quiet,
+    // Un solo posto costruisce le variabili: `DXMF.Diagnostics.defaults`.
+    let diagnostics = DXMF.Diagnostics.defaults(
+        config: config,
+        quiet: !globalDebugRequested(),
         frameLog: flags["frame-log"].map { URL(fileURLWithPath: Paths.expand($0)) },
-        lockDir: config.dxmfLockDir.isEmpty ? nil : config.dxmfLockDir,
-        gateLockWait: config.dxmfGateLockWait > 0 ? config.dxmfGateLockWait : nil,
-        depsDir: depsDir)
+        runtimeRoot: info.runtimeRoot)
 
     var extra: [String: String] = [:]
     if let appid = flags["appid"] {
@@ -1278,10 +1276,10 @@ func dxmfRunLocked(
     }
 
     // Riga di prova per l'lsof: stage, moduli, deps.
-    let provided = depsDir.map { dxmfProvidedLibraries(in: $0) } ?? []
+    let provided = diagnostics.depsDir.map { dxmfProvidedLibraries(in: $0) } ?? []
     Out.print("stage: \(info.stageRoot.path)")
     Out.print("modules: \(info.modules.joined(separator: ","))")
-    Out.print("deps: \(depsDir?.path ?? "—") (\(provided.joined(separator: ", ")))")
+    Out.print("deps: \(diagnostics.depsDir?.path ?? "—") (\(provided.joined(separator: ", ")))")
 
     let outcome = try LaunchLog.run(
         info.wineBinary, command, environment: env, cap: cap,

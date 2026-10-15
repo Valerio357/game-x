@@ -205,4 +205,35 @@ func runPrefixChecks(_ h: Harness) {
     } catch {
         h.check(false, "an uninstalled appid returned the wrong error: \(error)")
     }
+
+    // D1 (rilievo del VALIDATOR): `gx game launch` su un box dxmf deve applicare
+    // il contratto d'ambiente, come `gx dxmf run` e `gx steam launch`.
+    do {
+        let cfg = Config(dxmfWineRoot: root.appendingPathComponent("wine-host").path,
+                         dxmfStage: stage.path)
+        let info = DXMF.Info(
+            wineBinary: root.appendingPathComponent("wine-host/bin/wine").path,
+            runtimeRoot: root.appendingPathComponent("wine-host"),
+            wineVersion: "wine-11.10",
+            stageRoot: stage,
+            modules: ["d3d11", "dxgi"],
+            pinnedVersion: "11.10")
+        let boxURL = root.appendingPathComponent("boxes-live/gxdxmf-game")
+        try? FileManager.default.createDirectory(
+            at: boxURL.appendingPathComponent("drive_c"), withIntermediateDirectories: true)
+        let env = Prefix.dxmfLaunchEnvironment(
+            config: cfg, prefix: boxURL, info: info,
+            diagnostics: DXMF.Diagnostics.defaults(config: cfg), extra: [:])
+        h.equal(env["WINEDLLPATH_PREPEND"], stage.path,
+                "D1: a dxmf game launch carries WINEDLLPATH_PREPEND")
+        // In `WINEDLLOVERRIDES` il `=b` chiude la LISTA di moduli: il contratto è
+        // `d3d9,d3d11,dxgi=b`, quindi la sottostringa da cercare è quella intera.
+        h.check((env["WINEDLLOVERRIDES"] ?? "").contains("d3d9,d3d11,dxgi=b"),
+                "D1: a dxmf game launch forces the dxmf builtin modules")
+        // Nessuna regressione sul runtime non-dxmf: quel percorso resta invariato.
+        let stagingRT = ResolvedRuntime(kind: .wineStaging, wineBinary: "/usr/bin/true",
+                                        version: "wine-11.10", wineMajor: 11, gptkApp: nil,
+                                        hasD3DMetal: false, rosettaAvailable: false)
+        h.check(stagingRT.dxmf == nil, "D1: a non-dxmf runtime takes the unchanged path")
+    }
 }

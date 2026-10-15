@@ -1,0 +1,10 @@
+exit=3
+--- righe dello stage mappate (atteso 0): 0
+--- ultime righe del log:
+0024:fixme:ntdll:NtQuerySystemInformation info_class SYSTEM_PERFORMANCE_INFORMATION
+0024:fixme:winediag:wined3d_select_feature_level None of the requested D3D feature levels is supported on this GPU with the current shader backend.
+[demo] D3D11CreateDevice -> 0x80004005 level=0x0000
+exit=3
+--- dll native mappate:
+   /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-windows/dxgi.dll
+   /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-windows/d3d11.dll

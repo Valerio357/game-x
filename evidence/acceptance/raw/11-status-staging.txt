@@ -1,0 +1,12 @@
+dxmf runtime
+  host            : /Applications/Wine Staging.app/Contents/Resources/wine/bin/wine
+  wine version    : wine-11.10 (Staging)
+  stage           : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine
+  modules         : d3d11,dxgi
+  pin             : 11.10 (default)
+  capabilities    : dxmf modules: not loadable (ntdll.so lacks WINEDLLPATH_PREPEND; winemac.so lacks macdrv_functions) — patch the host first
+  unusable        : host Wine cannot load dxmf modules: ntdll.so lacks WINEDLLPATH_PREPEND; winemac.so lacks macdrv_functions. A complete patched host is the SAME host with the system libraries reachable: point `GX_DXMF_DEPS` (or `[dxmf] deps`) at a folder holding freetype, MoltenVK and gnutls, or build the runtime with `gx runtime install --from-source`. Do NOT switch to stock Wine: it lacks the two CodeWeavers patches and the modules do not load at all (`ERROR_MOD_NOT_FOUND`, 126)
+  deps            : /Users/valerio.domenici/x64deps (freetype, MoltenVK, gnutls)
+  log cap         : 512 MB (measured with du)
+  winedbg orphans : 0
+exit=3

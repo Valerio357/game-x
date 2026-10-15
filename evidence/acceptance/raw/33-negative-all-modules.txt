@@ -1,0 +1,2 @@
+dxmf_demo 9795 valerio.domenici  txt      REG               1,17  4540570            13531049 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-windows/d3d11.dll
+dxmf_demo 9795 valerio.domenici  txt      REG               1,17  1822876            13531165 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-windows/dxgi.dll

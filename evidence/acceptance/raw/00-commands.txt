@@ -1,0 +1,88 @@
+# Evidenza di accettazione gx-dxmf — comandi esatti
+# data: 2026-10-15T20:44:48Z
+# host: wine-11.10
+# stage: /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine
+# deps:  /Users/valerio.domenici/x64deps
+# bin:   /Users/valerio.domenici/Workspace/gx-dxmf/.build/debug/gx
+# tmpdir: /var/folders/gr/n1v9vpz528sg2d5fp1vh6vb00000gn/T//gxdxmf-acc-W3oP2x   (box mie, prefisso riservato gxdxmf-*)
+
+## gx dxmf status   (host patchato + deps)
+$ gx dxmf status
+dxmf runtime
+  host            : /Users/valerio.domenici/wine-d3dmetal/bin/wine
+  wine version    : wine-11.10
+  stage           : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine
+  modules         : d3d11,dxgi
+  pin             : 11.10 (default)
+  capabilities    : dxmf modules: loadable; Steam: hostable (freetype, MoltenVK, gnutls)
+  deps            : /Users/valerio.domenici/x64deps (freetype, MoltenVK, gnutls)
+  log cap         : 512 MB (measured with du)
+  winedbg orphans : 0
+
+## gx dxmf status   con un host SENZA le due patch (Staging)
+$ GX_DXMF_WINE_ROOT=/Applications/Wine\ Staging.app/Contents/Resources/wine gx dxmf status; echo exit=$?
+dxmf runtime
+  host            : /Applications/Wine Staging.app/Contents/Resources/wine/bin/wine
+  wine version    : wine-11.10 (Staging)
+  stage           : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine
+  modules         : d3d11,dxgi
+  pin             : 11.10 (default)
+  capabilities    : dxmf modules: not loadable (ntdll.so lacks WINEDLLPATH_PREPEND; winemac.so lacks macdrv_functions) — patch the host first
+  unusable        : host Wine cannot load dxmf modules: ntdll.so lacks WINEDLLPATH_PREPEND; winemac.so lacks macdrv_functions. A complete patched host is the SAME host with the system libraries reachable: point `GX_DXMF_DEPS` (or `[dxmf] deps`) at a folder holding freetype, MoltenVK and gnutls, or build the runtime with `gx runtime install --from-source`. Do NOT switch to stock Wine: it lacks the two CodeWeavers patches and the modules do not load at all (`ERROR_MOD_NOT_FOUND`, 126)
+  deps            : /Users/valerio.domenici/x64deps (freetype, MoltenVK, gnutls)
+  log cap         : 512 MB (measured with du)
+  winedbg orphans : 0
+exit=3
+
+## l'inventario dei moduli, con gli sha256 (per la prova per CONTENUTO)
+$ gx dxmf modules
+dxmf modules (/Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine)
+d3d11
+  pe              : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-windows/d3d11.dll  sha256 9967979c03a9673543a50adf0022f857561911158b499b005547a0cfcb4179fc
+  unix            : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-unix/d3d11.so  sha256 136b2ff01788ab947a7fdc3734aebc222778923a16b96bcc1bfc29f5be8939c8
+dxgi
+  pe              : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-windows/dxgi.dll  sha256 4e4336f81e354c44a79566df2a51a80d6cb8082e6957b1d19a7851d66c945d35
+  unix            : /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-unix/dxgi.so  sha256 ae66a2715c6bd1aa2a243d548cf799de7c58ba0283255817890a56eca0392bbf
+
+## box mia (tmpdir) col runtime dxmf
+$ gx box create gxdxmf-acc --runtime dxmf
+box 'gxdxmf-acc' ready → /var/folders/gr/n1v9vpz528sg2d5fp1vh6vb00000gn/T/gxdxmf-acc-W3oP2x/boxes/gxdxmf-acc
+   runtime: Game-X Wine+DXMF — wine-11.10 [wine]
+
+## PROVA POSITIVA: gx dxmf run con il contratto (--verbose per i marker dei moduli)
+$ gx dxmf run gxdxmf-acc --verbose --winedebug '+d3d11,+dxgi' --max-log-mb 8 -- <demo>
+[2026-10-15 22:45:18] INFO : gx dxmf run gxdxmf-acc --verbose --winedebug +d3d11,+dxgi --max-log-mb 8 -- /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+winedbg orphans: 0 (processes 608 of 2666)
+stage: /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine
+modules: d3d11,dxgi
+deps: /Users/valerio.domenici/x64deps (freetype, MoltenVK, gnutls)
+exit: 0
+log: /var/folders/gr/n1v9vpz528sg2d5fp1vh6vb00000gn/T/gxdxmf-acc-W3oP2x/logs/dxmf/gxdxmf-acc-2026-10-15T20-45-19Z.log
+written: 411032 bytes
+du: 462848 bytes
+truncated: no
+exit=0
+
+## controllo per CONTENUTO: gli sha256 dei file mappati vs quelli dichiarati da gx dxmf modules
+136b2ff01788ab947a7fdc3734aebc222778923a16b96bcc1bfc29f5be8939c8  /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-unix/d3d11.so
+ae66a2715c6bd1aa2a243d548cf799de7c58ba0283255817890a56eca0392bbf  /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-unix/dxgi.so
+9967979c03a9673543a50adf0022f857561911158b499b005547a0cfcb4179fc  /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-windows/d3d11.dll
+4e4336f81e354c44a79566df2a51a80d6cb8082e6957b1d19a7851d66c945d35  /Users/valerio.domenici/Workspace/dxmf/build/game-stage/wine/x86_64-windows/dxgi.dll
+
+## CONTROLLO NEGATIVO: lo stesso demo, SENZA il contratto dxmf
+$ WINEPREFIX=<box di questa tmpdir> wine <demo>   (niente WINEDLLPATH_PREPEND, niente override)
+exit=3
+--- righe dello stage mappate (atteso 0): 0
+--- ultime righe del log:
+0024:fixme:ntdll:NtQuerySystemInformation info_class SYSTEM_PERFORMANCE_INFORMATION
+0024:fixme:winediag:wined3d_select_feature_level None of the requested D3D feature levels is supported on this GPU with the current shader backend.
+[demo] D3D11CreateDevice -> 0x80004005 level=0x0000
+exit=3
+--- dll native mappate:
+   /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-windows/dxgi.dll
+   /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-windows/d3d11.dll
+
+## riepilogo
+- positiva: moduli mappati dal NOSTRO stage = 8 righe, exit=0
+- negativa: righe dello stage = 0 (atteso 0), exit del demo=3
+- tetto di log: vedi 'log cap' e 'truncated' in 20-run-positive.txt; il troncamento e' provato dal selftest (6 MB, cap 1 MB)

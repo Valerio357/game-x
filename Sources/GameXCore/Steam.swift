@@ -498,11 +498,7 @@ public enum Steam {
     /// Diagnostica dxmf derivata dalla `Config` (il `--frame-log` è un flag CLI e
     /// resta `nil` qui: l'avvio diretto non ha un frame log).
     static func dxmfDiagnostics(from config: Config) -> DXMF.Diagnostics {
-        DXMF.Diagnostics(
-            quiet: true,
-            frameLog: nil,
-            lockDir: config.dxmfLockDir.isEmpty ? nil : config.dxmfLockDir,
-            gateLockWait: config.dxmfGateLockWait > 0 ? config.dxmfGateLockWait : nil)
+        DXMF.Diagnostics.defaults(config: config)
     }
 
     // MARK: - Warm-up shader

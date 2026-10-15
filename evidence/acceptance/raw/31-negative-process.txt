@@ -1,0 +1,33 @@
+=== pid 9795
+  PID 
+ 9795 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-unix/wine /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 9795
+  PID 
+ 9795 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-unix/wine /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 9795
+  PID 
+ 9795 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-unix/wine /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 9795
+  PID 
+ 9795 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-unix/wine /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 9795
+  PID 
+ 9795 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-unix/wine /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 9795
+  PID 
+ 9795 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-unix/wine /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 9795
+  PID 
+ 9795 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-unix/wine /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 9795
+  PID 
+ 9795 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-unix/wine /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 9795
+  PID 
+ 9795 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-unix/wine /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 9795
+  PID 
+ 9795 /Users/valerio.domenici/wine-d3dmetal/lib/wine/x86_64-unix/wine /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe
+=== pid 9795
+  PID 
+ 9795 /Users/valerio.domenici/Workspace/dxmf/build/pe/bin/dxmf_demo.exe 
