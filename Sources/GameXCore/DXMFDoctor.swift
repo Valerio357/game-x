@@ -320,9 +320,14 @@ public enum DXMFDoctor {
                     + "WINEPREFIX=\(record.url.path) \"$(gx dxmf status | sed -n 's/^  host *: //p')\" "
                     + "msiexec /i <wine-mono-*.msi> /qn  (MSI: dl.winehq.org/wine/wine-mono/)"))
         } else {
-            checks.append(.init(id: "prefix.mono", status: .warn,
-                                title: "prefix wine-mono — missing",
-                                remedy: "gx runtime mono"))
+            checks.append(.init(
+                id: "prefix.mono", status: .warn,
+                title: "prefix wine-mono — missing",
+                detail: "needed by apps that use .NET (Steam's CEF needs it)",
+                // `gx runtime mono` e' legato al runtime DXMT: su una box dxmf NON
+                // funziona (verificato). Il rimedio deve essere quello che funziona.
+                remedy: "install it with msiexec: WINEPREFIX=<box> <host wine> "
+                    + "msiexec /i <wine-mono-*.msi> /qn  (MSI: dl.winehq.org/wine/wine-mono/)"))
         }
 
         // Override dxvk nel registry: la loro assenza è la causa nota della UI
