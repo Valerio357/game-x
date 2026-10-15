@@ -15,6 +15,13 @@ public struct Config: Sendable {
     public var esync: Bool
     public var msync: Bool
     public var logLevel: String
+    /// Runtime dxmf: host Wine (default `~/wine-d3dmetal`).
+    public var dxmfWineRoot: String
+    /// Stage dxmf (`WINEDLLPATH_PREPEND`); vuoto = scoperta di default.
+    public var dxmfStage: String
+    public var dxmfLockDir: String
+    public var dxmfGateLockWait: Int
+    public var dxmfLogCapMB: Int
 
     public init(
         prefixRoot: String = DefaultPaths.prefixRoot,
@@ -29,7 +36,12 @@ public struct Config: Sendable {
         webhelperWrapper: String = "auto",
         esync: Bool = true,
         msync: Bool = false,
-        logLevel: String = "info"
+        logLevel: String = "info",
+        dxmfWineRoot: String = "~/wine-d3dmetal",
+        dxmfStage: String = "",
+        dxmfLockDir: String = "",
+        dxmfGateLockWait: Int = 0,
+        dxmfLogCapMB: Int = 512
     ) {
         self.prefixRoot = prefixRoot
         self.gamesRoot = gamesRoot
@@ -44,6 +56,11 @@ public struct Config: Sendable {
         self.esync = esync
         self.msync = msync
         self.logLevel = logLevel
+        self.dxmfWineRoot = dxmfWineRoot
+        self.dxmfStage = dxmfStage
+        self.dxmfLockDir = dxmfLockDir
+        self.dxmfGateLockWait = dxmfGateLockWait
+        self.dxmfLogCapMB = dxmfLogCapMB
     }
 
     /// Risolve la configurazione: default → file → ambiente.
@@ -69,6 +86,15 @@ public struct Config: Sendable {
         if let v = environment["GX_ARCH"] { config.arch = v }
         if let v = environment["GX_STEAM_PREFIX"] { config.defaultSteamPrefix = v }
         if let v = environment["GX_LOG_LEVEL"] { config.logLevel = v }
+        if let v = environment["GX_DXMF_WINE_ROOT"] { config.dxmfWineRoot = v }
+        if let v = environment["GX_DXMF_STAGE"] { config.dxmfStage = v }
+        if let v = environment["GX_DXMF_LOCK_DIR"] { config.dxmfLockDir = v }
+        if let v = environment["GX_DXMF_GATE_LOCK_WAIT"], let n = Int(v) {
+            config.dxmfGateLockWait = n
+        }
+        if let v = environment["GX_DXMF_LOG_CAP_MB"], let n = Int(v) {
+            config.dxmfLogCapMB = n
+        }
 
         return config
     }
@@ -147,6 +173,11 @@ private func applyTOML(_ text: String, to config: inout Config) {
         case "steam.webhelper_wrapper": config.webhelperWrapper = entry.value
         case "launch.esync": config.esync = (entry.value == "true")
         case "launch.msync": config.msync = (entry.value == "true")
+        case "dxmf.wine_root": config.dxmfWineRoot = entry.value
+        case "dxmf.stage": config.dxmfStage = entry.value
+        case "dxmf.lock_dir": config.dxmfLockDir = entry.value
+        case "dxmf.gate_lock_wait": if let n = Int(entry.value) { config.dxmfGateLockWait = n }
+        case "dxmf.log_cap_mb": if let n = Int(entry.value) { config.dxmfLogCapMB = n }
         default: break
         }
     }

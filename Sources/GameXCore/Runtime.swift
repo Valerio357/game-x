@@ -4,6 +4,7 @@ import Foundation
 public struct ResolvedRuntime: Sendable {
     public enum Kind: String, Sendable {
         case dxmtWine = "Game-X Wine+DXMT"
+        case dxmfWine = "Game-X Wine+DXMF"
         case gptkWine = "GPTK"
         case wineStaging = "Wine Staging"
         case homebrew = "Homebrew Wine"
@@ -19,6 +20,8 @@ public struct ResolvedRuntime: Sendable {
     public let rosettaAvailable: Bool
     /// Cartella del runtime Game-X Wine+DXMT (nil per i runtime di sistema).
     public let runtimeRoot: String?
+    /// Info DXMF già risolta (se questo runtime è un Game-X Wine+DXMF).
+    public let dxmfInfo: DXMF.Info?
 
     public init(
         kind: Kind,
@@ -28,7 +31,8 @@ public struct ResolvedRuntime: Sendable {
         gptkApp: String?,
         hasD3DMetal: Bool,
         rosettaAvailable: Bool,
-        runtimeRoot: String? = nil
+        runtimeRoot: String? = nil,
+        dxmfInfo: DXMF.Info? = nil
     ) {
         self.kind = kind
         self.wineBinary = wineBinary
@@ -38,6 +42,7 @@ public struct ResolvedRuntime: Sendable {
         self.hasD3DMetal = hasD3DMetal
         self.rosettaAvailable = rosettaAvailable
         self.runtimeRoot = runtimeRoot
+        self.dxmfInfo = dxmfInfo
     }
 
     /// Dettagli del runtime DXMT (se questo runtime è un Game-X Wine+DXMT).
@@ -52,10 +57,21 @@ public struct ResolvedRuntime: Sendable {
         return D3DMetal.discover(root: URL(fileURLWithPath: runtimeRoot))
     }
 
+    /// Dettagli del runtime DXMF (se questo runtime è un Game-X Wine+DXMF).
+    public var dxmf: DXMF.Info? {
+        if let dxmfInfo { return dxmfInfo }
+        guard kind == .dxmfWine, let runtimeRoot else { return nil }
+        return DXMF.discover(root: URL(fileURLWithPath: runtimeRoot))
+    }
+
     /// La UI Steam richiede un Wine moderno (vedi DESIGN §11.4).
     public var supportsModernSteam: Bool { (wineMajor ?? 0) >= 8 }
 
     public var summary: String {
+        if let dxmf {
+            let folder = dxmf.stageRoot.lastPathComponent
+            return "Game-X Wine+DXMF — \(dxmf.wineVersion) [\(folder)]"
+        }
         if let d3dm = d3dmetal {
             let folder = runtimeRoot.map { " [" + URL(fileURLWithPath: $0).lastPathComponent + "]" } ?? ""
             return "Game-X Wine+D3DMetal — \(version) / D3DMetal \(d3dm.d3dmetalVersion)\(folder)"
@@ -91,7 +107,16 @@ public enum Runtime {
                                  label: "Wine+D3DMetal (Apple GPTK)  \(folder)",
                                  engine: "Wine+D3DMetal")
         }
-        if !gptk.isEmpty { return gptk }
+        // La voce dxmf si aggiunge senza togliere le esistenti.
+        var choices = gptk
+        if let info = DXMF.discover(config: config) {
+            let folder = info.stageRoot.lastPathComponent
+            let suffix = info.isUsable ? "" : " (not usable)"
+            choices.append(RuntimeChoice(id: "dxmf",
+                                         label: "Wine+DXMF  \(folder)\(suffix)",
+                                         engine: "Wine+DXMF"))
+        }
+        if !choices.isEmpty { return choices }
         return [RuntimeChoice(id: D3DMetal.defaultName,
                               label: "Wine+D3DMetal — not installed (run `gx runtime build-gptk`)",
                               engine: "Wine+D3DMetal")]
@@ -100,6 +125,9 @@ public enum Runtime {
 
     /// Risolve il runtime da usare secondo la precedenza:
     /// override esplicito → **wine-gptk (D3DMetal, default)** → DXMT → GPTK → Staging → Homebrew.
+    ///
+    /// NOTA (decisione del CEO, non del worker): `dxmf` NON entra in `resolve`.
+    /// GPTK resta il default; dxmf si seleziona esplicitamente (`select("dxmf")`).
     public static func resolve(config: Config) -> ResolvedRuntime? {
         if let override = config.resolvedPaths().wineBinaryOverride,
            FileManager.default.isExecutableFile(atPath: override) {
@@ -160,6 +188,9 @@ public enum Runtime {
                 hasD3DMetal: gptkApp.map(detectD3DMetal) ?? false,
                 rosettaAvailable: rosettaAvailable()))
         }
+        // In coda: NON altera la preferenza di `resolveForSteam` sui runtime esistenti,
+        // ma resta selezionabile con `select("dxmf")`.
+        result.append(contentsOf: dxmfRuntimes(config: config))
         return result
     }
 
@@ -186,6 +217,8 @@ public enum Runtime {
         switch name.lowercased() {
         case "dxmt", "wine-dxmt", "gamex", "game-x":
             return known.first { $0.kind == .dxmtWine }
+        case "dxmf", "wine-dxmf", "gamex-dxmf":
+            return known.first { $0.kind == .dxmfWine }
         case "gptk":
             return known.first { $0.kind == .gptkWine }
         case "staging", "wine-staging", "wine_staging":
@@ -245,6 +278,23 @@ public enum Runtime {
                 rosettaAvailable: rosettaAvailable(),
                 runtimeRoot: info.root.path)
         }
+    }
+
+    /// Runtime DXMF installati (host Wine + stage). Esposti anche quando non
+    /// sono utilizzabili (versione disallineata), così il chiamante può
+    /// rifiutare con `unusableReason`, mai in silenzio.
+    public static func dxmfRuntimes(config: Config) -> [ResolvedRuntime] {
+        guard let info = DXMF.discover(config: config) else { return [] }
+        return [ResolvedRuntime(
+            kind: .dxmfWine,
+            wineBinary: info.wineBinary,
+            version: info.wineVersion,
+            wineMajor: info.wineMajor,
+            gptkApp: nil,
+            hasD3DMetal: false,
+            rosettaAvailable: rosettaAvailable(),
+            runtimeRoot: info.runtimeRoot.path,
+            dxmfInfo: info)]
     }
 
     /// Runtime D3DMetal installati (da `<runtimes>/…`).
