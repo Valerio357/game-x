@@ -47,6 +47,22 @@ stata **read-only**: nessun comando `gx`, nessuna scrittura in `~/WinePrefixes` 
 prefix (verificato: zero occorrenze di `gx box|steam|deps`, `wineboot`, `WinePrefixes/*`
 nei loro log).
 
+## Limite di metodo del VALIDATOR (registrato per non leggerlo come una prova)
+
+VAL1 ha chiuso **4/6** asserzioni con una prova eseguita; due meritano una nota di lettura:
+
+- **A4 («Steam non prende mai il contratto»)**: la run `gx steam run` **non e' mai partita** in
+  quel clone — `timeout: command not found` (su macOS `timeout` **non esiste**: e' GNU coreutils).
+  Il verdetto PASS resta valido, ma poggia sull'**ambiente catturato** (`Steam.steamEnvironment`
+  senza `WINEDLLPATH_PREPEND`, senza `DXMF_DIAG_QUIET`, senza moduli forzati), sul **codice**
+  (`Steam.swift:57,68-83` vs `:355-369`) e sui **3 check del selftest** — **non** su una Steam viva.
+  Che e' coerente con il resto: la meta' «Steam vivo e visibile» e' **UNPROVEN** in tutto lo stream.
+- **A2**: il secondo «fallimento» di tool e' **la prova stessa** — `gx box create` con host finto
+  `wine-7.7` esce non-zero **di proposito** (rifiuto), e il wrapper lo registra come comando fallito.
+
+Trappola generale da non ripetere su questa macchina: **`timeout` non esiste**; un check scritto
+con `timeout` **sparisce in silenzio** e il report puo' ancora dire PASS per altre vie.
+
 ## Evidenza raccolta (ORCH, read-only)
 
 - **Capacità degli host (F001b) — misurato**: `~/wine-d3dmetal` ha `macdrv_functions`
