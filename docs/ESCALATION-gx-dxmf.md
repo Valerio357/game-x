@@ -31,11 +31,22 @@ cartella deps (`GX_DXMF_DEPS` → `<runtime>/x64deps` → `~/x64deps`) e mette
 | --- | --- | --- |
 | **A.** usare la cartella deps (implementato) | 0 | `DYLD_*` non e' letto da eventuali binari protetti da SIP; Wine non lo e' |
 | **B.** installare le dylib **dentro** `~/wine-d3dmetal` | ~1 min + 250 MB | e' una **scrittura nel runtime**: serve la tua autorizzazione |
-| **C.** ricostruire il runtime completo (`gx runtime install --from-source`) | 40–60 min | nessuno, ma non e' necessario se A basta |
+| **C.** ricostruire il runtime completo (`gx runtime install --from-source`) | 40–60 min | nessuno, ma non e' piu' necessario: B e' stata fatta |
 
-**Raccomandazione: A.** Se Steam non parte lo stesso, allora B.
+**AGGIORNAMENTO (2026-10-15, tardi) — ESC-1 e' GIA' RISOLTA dal CEO.**
+Alle **22:12** e **22:38** le tre librerie (e i loro dipendenti) sono state **installate
+dentro `~/wine-d3dmetal`** (`lib/` e `lib/wine/x86_64-unix/`): misurato con
+`stat`/`find` adesso, non ereditato dal documento. L'host e' quindi **completo E patchato**,
+cioe' esattamente il caso che il CEO ha descritto: **un solo wineserver per Steam e gioco**.
+La mia misura precedente (0/0/0) era di **22:0x** ed e' **stantia**: corretta in
+`docs/GX-DXMF.md` §1-bis con entrambe le misure e le date.
+La cartella deps resta come **rete di sicurezza** (per un host che non le avesse), non come
+rimedio necessario. **Nessuna decisione residua su ESC-1.**
 
 ## ESC-2 — l'accettazione «Steam parte e si vede» (decisione, non capacita')
+
+> Resa **piu' facile** dall'aggiornamento di ESC-1: l'host e' ora completo, quindi Steam e il
+> gioco possono girare **sullo stesso wineserver**, come hai chiesto.
 
 Vincolo in vigore: **non muto box che non siano mie** e **se serve una box con Steam chiedo**.
 Il criterio che hai dato e': *i moduli si caricano (sonda PASS) **E** Steam parte e si vede*.

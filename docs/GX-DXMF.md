@@ -40,19 +40,30 @@ stretto di così — servono **due capacità distinte** e nessuno dei due host l
 
 | host | versione | `WINEDLLPATH_PREPEND` (ntdll.so) | `macdrv_functions` (winemac.so) | freetype / MoltenVK / gnutls |
 | --- | --- | --- | --- | --- |
-| `~/wine-d3dmetal` | `wine-11.10` | **sì** | **sì** | **no** (0/0/0) |
+| `~/wine-d3dmetal` | `wine-11.10` | **sì** | **sì** | **sì** (installate 2026-10-15 **22:12** in `lib/` e **22:38** in `lib/wine/x86_64-unix/`) |
 | `Wine Staging.app` | `wine-11.10 (Staging)` | **no** | **no** | sì (2/1/4) |
 | runtime `wine-dxmt` di gx | assente su questa macchina | — | — | — |
+
+> **Correzione di misura (2026-10-15, tardi).** Alle 22:0x lo stesso `find` su
+> `~/wine-d3dmetal` dava **0 / 0 / 0**: era vero allora. Alle **22:12** e **22:38**
+> il CEO ha **installato le librerie dentro l'host** (`lib/libfreetype.6.dylib`,
+> `lib/libgnutls.30.dylib`, `lib/libMoltenVK.dylib`, più i loro dipendenti), cioè
+> ha eseguito la **opzione B** di `ESC-1`. Da quel momento l'host è **completo E
+> patchato**: è l'unico host che soddisfa entrambe le colonne, e il «un solo
+> wineserver per Steam e gioco» che il CEO ha chiesto è **possibile**. Chi legge
+> misuri, non citi: `stat -f '%Sm %N' ~/wine-d3dmetal/lib/*.dylib`.
 
 Misure esatte: `nm -gU …/winemac.so | grep -c macdrv_functions`,
 `strings …/ntdll.so | grep -c WINEDLLPATH_PREPEND`, `find <root> -name lib{freetype,MoltenVK,gnutls}*`.
 
-**Conseguenza.** «Un solo wineserver» (host completo **e** patchato) non è ottenibile
-con gli host di oggi: Staging **non carica affatto** i nostri moduli (mancano entrambe le
-patch), `wine-d3dmetal` li carica ma non regge né la UI di Steam (freetype/MoltenVK) né
-il TLS. L'unico host che soddisfa entrambe le colonne è la build **completa + patchata**
-che `gx runtime install --from-source` produce (`scripts/build-wine-dxmt.sh`: Wine 11.10
-+ le 3 patch CodeWeavers + `x64deps`), oggi non installata.
+**Conseguenza.** «Un solo wineserver» (host completo **e** patchato) non era ottenibile
+con gli host del 2026-10-15 22:0x: Staging **non carica affatto** i nostri moduli (mancano
+entrambe le patch), `wine-d3dmetal` li caricava ma non reggeva né la UI di Steam
+(freetype/MoltenVK) né il TLS. Dal **22:12/22:38** `~/wine-d3dmetal` **è** quell'host
+(vedi la nota di correzione sopra): un solo wineserver per Steam e gioco.
+In più `gx` sa rendere completo anche un host che non lo fosse, esponendo una cartella
+deps (`GX_DXMF_DEPS` → `<runtime>/x64deps` → `~/x64deps`) via `DYLD_LIBRARY_PATH`: è la
+rete di sicurezza, non più il rimedio necessario.
 
 Perciò `DXMF.Info` porta una **probe delle capacità dell'host**, e i rifiuti sono
 **due e distinti**, mai uno solo generico:
