@@ -170,6 +170,54 @@ public enum Doctor {
                 action: feats.sdl2 ? nil : .buildRuntime))
         }
 
+        // dxmf: capacità dell'host (le due patch + le librerie di sistema,
+        // `docs/GX-DXMF.md` §1-bis) e pin di versione.
+        let dxmfHostRoot = URL(fileURLWithPath: (config.dxmfWineRoot as NSString).expandingTildeInPath)
+        let dxmfHostBinary = dxmfHostRoot.appendingPathComponent("bin/wine").path
+        if FileManager.default.isExecutableFile(atPath: dxmfHostBinary) {
+            let probe = probeDXMFHost(wineBinary: dxmfHostBinary)
+            var dxmfDetail = "modules \(probe.canLoadModules ? "loadable" : "NOT loadable")"
+            if !probe.canLoadModules {
+                dxmfDetail += " — missing: " + probe.missingPatches.joined(separator: "; ")
+            }
+            dxmfDetail += "; Steam \(probe.canHostSteam ? "hostable" : "not hostable")"
+            if probe.canLoadModules && !probe.canHostSteam {
+                dxmfDetail += " (missing " + probe.missingLibraries.joined(separator: ", ") + ")"
+            }
+            checks.append(.init(
+                status: probe.canLoadModules ? .ok : .fail,
+                title: "dxmf host capabilities",
+                detail: dxmfDetail,
+                remedy: probe.canLoadModules ? nil
+                    : "use a complete + patched host (`gx runtime install --from-source`)"))
+
+            if let declared = declaredHostWineVersion(root: dxmfHostRoot) {
+                let pinned = DXMF.parseMajorMinor(from: DXMF.pinnedWineVersion)
+                let host = DXMF.parseMajorMinor(from: declared)
+                if let pinned, let host, pinned.major == host.major, pinned.minor == host.minor {
+                    checks.append(.init(status: .ok,
+                        title: "dxmf version pin \(DXMF.pinnedWineVersion)",
+                        detail: "host declares \(declared)"))
+                } else {
+                    checks.append(.init(status: .fail,
+                        title: "dxmf version pin mismatch",
+                        detail: "host declares \(declared), modules pinned \(DXMF.pinnedWineVersion) — the PE↔unix ABI is version-locked",
+                        remedy: "install a runtime matching the module pin"))
+                }
+            } else {
+                checks.append(.init(status: .warn,
+                    title: "dxmf version pin \(DXMF.pinnedWineVersion)",
+                    detail: "host version not declared next to \(dxmfHostRoot.path) (no manifest.json); "
+                        + "cannot confirm without running Wine",
+                    remedy: "run `gx dxmf status` (it measures the host)"))
+            }
+        } else {
+            checks.append(.init(status: .warn,
+                title: "dxmf runtime not installed",
+                detail: "no host Wine at \(dxmfHostBinary)",
+                remedy: "install it with `gx runtime install --from-source`"))
+        }
+
         // GPTK di sistema: non serve se abbiamo già un runtime auto-consistente.
         let gptkInstalls = GPTK.discover(config: config)
         let macOSMajor = gpu.macOSMajor ?? 26
@@ -215,6 +263,40 @@ public enum Doctor {
             }
         }
 
+        // Stato di lock dei box: «in ricostruzione» invece di un risultato
+        // ambiguo. Il lock è del CLI; qui lo si legge soltanto.
+        for box in boxes {
+            switch Prefix.readState(box, config: config) {
+            case .free:
+                break
+            case .held(let info):
+                checks.append(.init(
+                    status: .warn,
+                    title: "box '\(box.name)' being rebuilt",
+                    detail: "lock held by pid \(info.pid) (\(info.command); \(info.reason)) "
+                        + "for \(Int(info.ageSeconds))s",
+                    remedy: "wait for the mutation to finish; use `--force` only consciously"))
+            case .stale(let info):
+                checks.append(.init(
+                    status: .ok,
+                    title: "box '\(box.name)' has a stale lock",
+                    detail: "pid \(info.pid) (\(info.command); \(info.reason)); recoverable"))
+            }
+        }
+
+        // Igiene: orfani `winedbg --auto` (723 accumulati una volta hanno
+        // esaurito la process table). Il report dice quanti; >100 = warn;
+        // `isCrowded` = fail.
+        let orphans = Orphans.scan()
+        var orphanDetail = "\(orphans.winedbg.count) winedbg --auto orphans, "
+            + "\(orphans.totalProcesses) processes"
+        if let limit = orphans.softLimit { orphanDetail += " / \(limit) max" }
+        checks.append(.init(
+            status: orphans.isCrowded ? .fail : (orphans.winedbg.count > 100 ? .warn : .ok),
+            title: "winedbg orphans",
+            detail: orphanDetail,
+            remedy: orphans.winedbg.isEmpty ? nil : "gx dxmf run --sweep (sweeps `winedbg --auto`)"))
+
         // Disk space (runtime ~2 GB + box ~20-25 GB with a game)
         if let free = freeDiskBytes(at: paths.prefixRoot) {
             let gb = Double(free) / 1_073_741_824
@@ -253,6 +335,93 @@ public enum Doctor {
         }
         let version = ProcessRunner.firstLine(path, versionArgs) ?? "present"
         return Check(status: .ok, title: "\(name): \(version)")
+    }
+
+    // MARK: - dxmf host capabilities (F004)
+
+    /// Le librerie di sistema che separano un host da-gioco da uno che regge
+    /// anche la UI di Steam (`docs/GX-DXMF.md` §1-bis).
+    static let dxmfRequiredLibraries = ["freetype", "MoltenVK", "gnutls"]
+
+    struct DXMFHostProbe {
+        var hasDllPathPrepend = false
+        var hasMacdrvBridge = false
+        var libraries: [String] = []
+
+        /// Le due patch: la condizione per caricare i moduli dxmf.
+        var canLoadModules: Bool { hasDllPathPrepend && hasMacdrvBridge }
+        /// Le due patch **e** le librerie di sistema: la condizione per Steam.
+        var canHostSteam: Bool {
+            canLoadModules && Doctor.dxmfRequiredLibraries.allSatisfy(libraries.contains)
+        }
+        var missingPatches: [String] {
+            var missing: [String] = []
+            if !hasDllPathPrepend { missing.append("ntdll.so lacks WINEDLLPATH_PREPEND") }
+            if !hasMacdrvBridge { missing.append("winemac.so lacks macdrv_functions") }
+            return missing
+        }
+        var missingLibraries: [String] {
+            Doctor.dxmfRequiredLibraries.filter { !libraries.contains($0) }
+        }
+    }
+
+    /// Probe **read-only** dell'host dxmf, **senza eseguire Wine**: `nm`/`strings`
+    /// sui due `.so` e un walk limitato per le librerie di sistema. Corrisponde
+    /// alla tabella di `docs/GX-DXMF.md` §1-bis.
+    static func probeDXMFHost(wineBinary: String) -> DXMFHostProbe {
+        let binary = URL(fileURLWithPath: (wineBinary as NSString).expandingTildeInPath)
+        let root = binary.deletingLastPathComponent().deletingLastPathComponent()
+        let unixDir = root.appendingPathComponent("lib/wine/x86_64-unix")
+        var probe = DXMFHostProbe()
+        probe.hasDllPathPrepend = binaryContains(
+            unixDir.appendingPathComponent("ntdll.so").path,
+            marker: "WINEDLLPATH_PREPEND", viaNm: false)
+        probe.hasMacdrvBridge = binaryContains(
+            unixDir.appendingPathComponent("winemac.so").path,
+            marker: "macdrv_functions", viaNm: true)
+        probe.libraries = findDxmfLibraries(root: root)
+        return probe
+    }
+
+    static func binaryContains(_ path: String, marker: String, viaNm: Bool) -> Bool {
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        if viaNm, let result = try? ProcessRunner.run("/usr/bin/nm", ["-gU", path]),
+           result.stdout.split(separator: "\n").contains(where: { $0.contains(marker) }) {
+            return true
+        }
+        guard let result = try? ProcessRunner.run("/usr/bin/strings", [path]) else { return false }
+        return result.stdout.split(separator: "\n").contains(where: { $0.contains(marker) })
+    }
+
+    static func findDxmfLibraries(root: URL) -> [String] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
+        var found = Set<String>()
+        var inspected = 0
+        for case let url as URL in enumerator {
+            inspected += 1
+            if inspected > 20_000 { break }
+            let name = url.lastPathComponent
+            guard name.hasSuffix(".dylib") else { continue }
+            for library in dxmfRequiredLibraries where name.hasPrefix("lib\(library)") {
+                found.insert(library)
+            }
+        }
+        return dxmfRequiredLibraries.filter(found.contains)
+    }
+
+    /// Versione dell'host **dichiarata accanto all'host** (`manifest.json`), se
+    /// c'è: così il check del pin non esegue Wine.
+    static func declaredHostWineVersion(root: URL) -> String? {
+        let manifest = root.appendingPathComponent("manifest.json")
+        guard let data = try? Data(contentsOf: manifest),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return nil
+        }
+        for key in ["wineVersion", "wine", "pinnedVersion"] {
+            if let value = object[key] as? String, !value.isEmpty { return value }
+        }
+        return nil
     }
 
     /// Apple's "Evaluation environment for Windows games" DMG (Game Porting Toolkit 4),

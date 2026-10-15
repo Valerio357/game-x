@@ -109,12 +109,56 @@ public enum Prefix {
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    /// Trova un box. Il percorso assoluto è la **via veloce**; l'enumerazione del
+    /// solo `prefixRoot` è la **fonte di verità**: un nome che il listino mostra
+    /// non è mai «not found» solo perché lo `stat` assoluto non l'ha visto
+    /// (finestra di ricostruzione, cache del kernel). Se il nome compare nel
+    /// listino, ritorna il record; una lettura che non riesce è dichiarata dalle
+    /// query (`readState`/`readNotice`), mai mascherata come assenza.
     public static func find(_ name: String, paths: Paths) -> PrefixRecord? {
         let url = paths.prefixRoot.appendingPathComponent(name)
-        guard FileManager.default.fileExists(atPath: url.appendingPathComponent("drive_c").path) else {
-            return nil
+        if FileManager.default.fileExists(atPath: url.appendingPathComponent("drive_c").path) {
+            return PrefixRecord(name: name, url: url)
         }
+        // Enumerazione: legge il listino del solo `prefixRoot` senza fare lo stat
+        // dei figli, quindi riesce anche dove il percorso assoluto fallisce.
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: paths.prefixRoot.path),
+              names.contains(name) else { return nil }
         return PrefixRecord(name: name, url: url)
+    }
+
+    // MARK: - Lock (rispettato, mai acquisito qui)
+
+    /// Rifiuta di mutare un box se un lock è tenuto (`BoxLock.state == .held`),
+    /// con pid, da quanto e cosa sta facendo. `.stale` si può procedere.
+    ///
+    /// Il lock è **acquisito dal CLI**: la libreria lo rispetta soltanto e non ne
+    /// introduce un secondo. `BoxLock` resta la fonte unica.
+    public static func refuseIfLocked(box: String, config: Config) throws {
+        if case .held(let info) = BoxLock.state(box: box, config: config) {
+            throw BoxLock.LockError.heldBy(info)
+        }
+    }
+
+    /// Stato di lock di un box per le **query di lettura**: se `.held` la query
+    /// dichiara «in ricostruzione, lock tenuto da pid N … da Xs» invece di dare
+    /// un risultato ambiguo. `.stale` è recuperabile e viene dichiarato.
+    public static func readState(_ record: PrefixRecord, config: Config) -> BoxLock.ReadState {
+        BoxLock.state(box: record.name, config: config)
+    }
+
+    /// Messaggio per una query. `nil` = nessun lock, nessun avviso da dare.
+    public static func readNotice(_ record: PrefixRecord, config: Config) -> String? {
+        switch readState(record, config: config) {
+        case .free:
+            return nil
+        case .held(let info):
+            return "box '\(record.name)' is being rebuilt: lock held by pid \(info.pid) "
+                + "(\(info.command); \(info.reason)) for \(Int(info.ageSeconds))s"
+        case .stale(let info):
+            return "box '\(record.name)' has a stale lock (pid \(info.pid), "
+                + "\(info.command); \(info.reason)); nothing is mutating it now"
+        }
     }
 
     // MARK: - Validazione
@@ -137,6 +181,7 @@ public enum Prefix {
         force: Bool = false
     ) throws -> PrefixRecord {
         guard validateName(name) else { throw PrefixError.invalidName(name) }
+        try refuseIfLocked(box: name, config: config)
 
         let paths = config.resolvedPaths()
         try FileManager.default.createDirectory(at: paths.prefixRoot, withIntermediateDirectories: true)
@@ -238,6 +283,7 @@ public enum Prefix {
     /// Non cancella mai i save silenziosamente.
     @discardableResult
     public static func remove(_ record: PrefixRecord, paths: Paths) throws -> URL {
+        try refuseIfLocked(box: record.name, config: Config(cacheRoot: paths.cacheRoot.path))
         let trash = paths.prefixRoot.appendingPathComponent(".trash")
         try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
 
@@ -249,7 +295,19 @@ public enum Prefix {
     }
 
     /// Elimina definitivamente un prefix già spostato nel cestino interno.
+    /// Lock-aware: se la entry portava un `.gx.meta.json`, rifiuta di purgare un
+    /// box il cui lock è tenuto. Il lock non è mai preso qui (`BoxLock` è la
+    /// fonte unica).
     public static func purge(_ url: URL) throws {
+        try purge(url, config: Config())
+    }
+
+    /// Variante con `Config` esplicito per il lock (test e chiamanti che non
+    /// vogliono il `cacheRoot` di default).
+    public static func purge(_ url: URL, config: Config) throws {
+        if let box = PrefixRecord(name: url.lastPathComponent, url: url).loadMeta()?.name {
+            try refuseIfLocked(box: box, config: config)
+        }
         try FileManager.default.removeItem(at: url)
     }
 
@@ -288,6 +346,25 @@ public enum Prefix {
             }
             env.merge(d3dmEnv) { _, new in new }
         }
+        return env
+    }
+
+    /// Ambiente per il **processo del gioco** sotto dxmf: parte dall'ambiente di
+    /// base del prefix e ci sovrappone il contratto dxmf (`DXMF.environment`:
+    /// `WINEDLLPATH_PREPEND`, `WINEDLLOVERRIDES`, `DXMF_*`).
+    ///
+    /// **Non usare per Steam.** La UI di Steam compone in D3D11 via dxvk: con i
+    /// moduli dxmf diventa **nera**. Steam usa `Steam.steamEnvironment`, che
+    /// rimuove il contratto dxmf; il contratto si applica **solo** al gioco.
+    public static func dxmfLaunchEnvironment(
+        config: Config,
+        prefix: URL,
+        info: DXMF.Info,
+        diagnostics: DXMF.Diagnostics = DXMF.Diagnostics(),
+        extra: [String: String] = [:]
+    ) -> [String: String] {
+        var env = baseEnvironment(config: config, prefix: prefix)
+        env.merge(DXMF.environment(for: info, diagnostics: diagnostics, extra: extra)) { _, new in new }
         return env
     }
 

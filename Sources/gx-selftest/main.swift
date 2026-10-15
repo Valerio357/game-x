@@ -629,4 +629,8 @@ do {
 // Igiene F002: lock per box (BoxLock) e orfani winedbg (Orphans).
 runHygieneChecks(h)
 
+// F004: innesti — find per enumerazione, lock a livello di libreria,
+// Steam su dxvk + gioco su dxmf, risoluzione dell'exe.
+runPrefixChecks(h)
+
 exit(h.finish())
