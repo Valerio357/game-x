@@ -90,6 +90,23 @@ do {
         return host
     }
 
+    // F001b: stub dei due `.so` dell'host. `patched` decide se portano i marker
+    // che `strings`/`nm` cercano; `libs` crea le librerie di sistema.
+    func writeHostLibs(_ host: URL, patched: Bool, libs: Bool) {
+        let unix = host.appendingPathComponent("lib/wine/x86_64-unix")
+        try? fm.createDirectory(at: unix, withIntermediateDirectories: true)
+        try? "\(patched ? "WINEDLLPATH_PREPEND" : "no-dllpath-marker")\n".write(
+            to: unix.appendingPathComponent("ntdll.so"), atomically: true, encoding: .utf8)
+        try? "\(patched ? "macdrv_functions" : "no-macdrv-marker")\n".write(
+            to: unix.appendingPathComponent("winemac.so"), atomically: true, encoding: .utf8)
+        guard libs else { return }
+        let external = host.appendingPathComponent("lib/external")
+        try? fm.createDirectory(at: external, withIntermediateDirectories: true)
+        for lib in ["libfreetype.6.dylib", "libMoltenVK.dylib", "libgnutls.30.dylib"] {
+            try? Data([0xca, 0xfe, 0xba, 0xbe]).write(to: external.appendingPathComponent(lib))
+        }
+    }
+
     // Stage finto: d3d11 + dxgi (PE + unix), con pin 11.10 dichiarato.
     let stage = root.appendingPathComponent("game-stage/wine")
     for module in ["d3d11", "dxgi"] {
@@ -104,6 +121,7 @@ do {
         to: stage.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
 
     let host = makeHost("wine-d3dmetal", declared: "wine-11.10")
+    writeHostLibs(host, patched: true, libs: true)
     let cfg = Config(dxmfWineRoot: host.path, dxmfStage: stage.path)
     guard let info = DXMF.discover(config: cfg) else {
         h.check(false, "dxmf discover finds host + stage")
@@ -159,6 +177,100 @@ do {
     h.check(old.unusableReason != nil, "unusable reason is named")
     h.check((old.versionMismatch ?? "").contains("wine-7.7"), "mismatch names host version")
     h.check((old.versionMismatch ?? "").contains("11.10"), "mismatch names pinned version")
+    // L'ordine dei rifiuti: la versione viene prima delle capacità (l'host
+    // wine-7.7 qui non ha nemmeno le patch: il messaggio deve restare il mismatch).
+    h.check(!(old.unusableReason ?? "").contains("--from-source"),
+            "version mismatch precedes the capability refusal")
+
+    // F001b — capacità dell'host: 4 host finti (a/b/c/d), senza eseguire Wine.
+    func capsHost(_ name: String, patched: Bool, libs: Bool) -> DXMF.HostCapabilities {
+        let fake = makeHost(name, declared: "wine-11.10")
+        writeHostLibs(fake, patched: patched, libs: libs)
+        return DXMF.hostCapabilities(forBinary: fake.appendingPathComponent("bin/wine").path)
+    }
+
+    let capA = capsHost("cap-a-patched-libs", patched: true, libs: true)
+    h.check(capA.canLoadDXMFModules, "(a) patch+libs → modules loadable")
+    h.check(capA.canHostSteam, "(a) patch+libs → Steam hostable")
+    h.check(capA.refusal == nil, "(a) patch+libs → no refusal")
+    h.equal(capA.systemLibraries, ["freetype", "MoltenVK", "gnutls"], "(a) 3 system libraries")
+
+    let capB = capsHost("cap-b-patched-nolibs", patched: true, libs: false)
+    h.check(capB.canLoadDXMFModules, "(b) patch no libs → modules loadable")
+    h.check(capB.canHostSteam == false, "(b) patch no libs → Steam not hostable")
+    h.check(capB.refusal == nil, "(b) patch no libs → no refusal (game-only host)")
+    h.check(capB.summary.contains("game only"), "(b) summary calls it game-only")
+
+    let capC = capsHost("cap-c-libs-nopatch", patched: false, libs: true)
+    h.check(capC.canLoadDXMFModules == false, "(c) libs no patch → modules not loadable")
+    h.check(capC.canHostSteam == false, "(c) libs no patch → Steam not hostable")
+    let refusalC = capC.refusal ?? ""
+    h.check(refusalC.contains("WINEDLLPATH_PREPEND"), "(c) refusal names the ntdll patch")
+    h.check(refusalC.contains("macdrv_functions"), "(c) refusal names the winemac patch")
+    h.check(refusalC.contains("gx runtime install --from-source"), "(c) refusal names the remedy")
+
+    let capD = capsHost("cap-d-none", patched: false, libs: false)
+    h.check(capD.canLoadDXMFModules == false, "(d) neither → modules not loadable")
+    h.check(capD.canHostSteam == false, "(d) neither → Steam not hostable")
+    h.check(capD.systemLibraries.isEmpty, "(d) neither → no libraries")
+    h.check(capD.refusal != nil, "(d) neither → named refusal")
+
+    // (b) via discover: un host patchato senza librerie resta usabile per il gioco.
+    let gameOnlyHost = makeHost("cap-game-only", declared: "wine-11.10")
+    writeHostLibs(gameOnlyHost, patched: true, libs: false)
+    let gameOnlyCfg = Config(dxmfWineRoot: gameOnlyHost.path, dxmfStage: stage.path)
+    if let gameOnly = DXMF.discover(config: gameOnlyCfg) {
+        h.check(gameOnly.isUsable, "(b) game-only host is usable")
+        h.check(gameOnly.unusableReason == nil, "(b) game-only host → no unusable reason")
+        h.check(gameOnly.hostCapabilities.canLoadDXMFModules, "(b) game-only → modules loadable")
+        h.check(gameOnly.hostCapabilities.canHostSteam == false, "(b) game-only → can't host Steam")
+    } else {
+        h.check(false, "(b) discover finds the game-only host")
+    }
+
+    // (c) via discover: senza patch l'host è inutilizzabile, e il rifiuto
+    // composto nomina la patch mancante e il rimedio.
+    let noPatchHost = makeHost("cap-nopatch", declared: "wine-11.10")
+    writeHostLibs(noPatchHost, patched: false, libs: true)
+    let noPatchCfg = Config(dxmfWineRoot: noPatchHost.path, dxmfStage: stage.path)
+    if let noPatch = DXMF.discover(config: noPatchCfg) {
+        h.check(noPatch.isUsable == false, "(c) unpatched host is not usable")
+        let reason = noPatch.unusableReason ?? ""
+        h.check(reason.contains("WINEDLLPATH_PREPEND"), "(c) unusableReason names missing ntdll patch")
+        h.check(reason.contains("gx runtime install --from-source"), "(c) unusableReason names the remedy")
+    } else {
+        h.check(false, "(c) discover finds the unpatched host")
+    }
+
+    // Host reali (read-only), solo se esistono: la misura della tabella §1-bis.
+    let realHome = fm.homeDirectoryForCurrentUser
+    let realD3DMetal = realHome.appendingPathComponent("wine-d3dmetal/bin/wine").path
+    if fm.isExecutableFile(atPath: realD3DMetal) {
+        let caps = DXMF.hostCapabilities(forBinary: realD3DMetal)
+        let required = ["freetype", "MoltenVK", "gnutls"]
+        h.check(caps.hasDllPathPrepend, "real ~/wine-d3dmetal has WINEDLLPATH_PREPEND")
+        h.check(caps.hasMacdrvBridge, "real ~/wine-d3dmetal has macdrv_functions")
+        h.check(caps.canLoadDXMFModules, "real ~/wine-d3dmetal loads dxmf modules")
+        h.check(caps.refusal == nil, "real ~/wine-d3dmetal: no capability refusal")
+        // Le librerie di sistema di questo host sono cambiate sotto la lane
+        // (misurato 2026-10-15: 0 alle 22:10, tutte e 3 alle 22:12). La probe
+        // misura lo stato reale, quindi non fissiamo un valore: verifichiamo
+        // che `canHostSteam` concordi con le librerie misurate (nel messaggio).
+        h.check(caps.canHostSteam == (caps.canLoadDXMFModules
+                    && required.allSatisfy(caps.systemLibraries.contains)),
+                "real ~/wine-d3dmetal: canHostSteam matches measured \(caps.systemLibraries)")
+    }
+    let realStaging = "/Applications/Wine Staging.app/Contents/Resources/wine/bin/wine"
+    if fm.isExecutableFile(atPath: realStaging) {
+        let caps = DXMF.hostCapabilities(forBinary: realStaging)
+        h.check(caps.hasDllPathPrepend == false, "real Wine Staging lacks WINEDLLPATH_PREPEND")
+        h.check(caps.hasMacdrvBridge == false, "real Wine Staging lacks macdrv_functions")
+        h.check(caps.canLoadDXMFModules == false, "real Wine Staging cannot load dxmf modules")
+        h.check(caps.canHostSteam == false, "real Wine Staging cannot host Steam UI (no patches)")
+        h.equal(caps.systemLibraries, ["freetype", "MoltenVK", "gnutls"],
+                "real Wine Staging: 3 system libraries")
+        h.check(caps.refusal != nil, "real Wine Staging: named refusal")
+    }
 
     // Uno stage senza moduli completi non è uno stage.
     let emptyStage = root.appendingPathComponent("empty-stage")

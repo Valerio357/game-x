@@ -30,6 +30,8 @@ public enum DXMF {
         public let wineMajor: Int?
         /// File da cui viene il pin (per il messaggio di rifiuto). nil = default.
         public let pinSource: String?
+        /// Capacità dell'host misurate sui binari (F001b), mai eseguendo Wine.
+        public let hostCapabilities: HostCapabilities
 
         public init(
             wineBinary: String,
@@ -39,7 +41,8 @@ public enum DXMF {
             modules: [String],
             pinnedVersion: String?,
             wineMajor: Int? = nil,
-            pinSource: String? = nil
+            pinSource: String? = nil,
+            hostCapabilities: HostCapabilities
         ) {
             self.wineBinary = wineBinary
             self.runtimeRoot = runtimeRoot
@@ -49,6 +52,7 @@ public enum DXMF {
             self.pinnedVersion = pinnedVersion
             self.wineMajor = wineMajor ?? Runtime.parseMajor(from: wineVersion)
             self.pinSource = pinSource
+            self.hostCapabilities = hostCapabilities
         }
 
         /// Perché questo runtime non è utilizzabile (nil se lo è).
@@ -72,6 +76,10 @@ public enum DXMF {
                 }
             }
             if let mismatch = versionMismatch { return mismatch }
+            // Le due patch sono l'ultimo muro: un host senza di esse non carica
+            // i moduli. Le librerie di sistema NO: `canHostSteam` è un fatto
+            // separato, un host senza librerie resta usabile per il gioco.
+            if let refusal = hostCapabilities.refusal { return refusal }
             return nil
         }
 
@@ -120,6 +128,126 @@ public enum DXMF {
         }
     }
 
+    // MARK: - Capacità dell'host (F001b)
+
+    /// Ciò che un host Wine sa fare, misurato **sui binari** senza eseguirlo.
+    /// `~/wine-d3dmetal` è una build minimale + patchata: carica i moduli dxmf
+    /// ma non regge la UI di Steam; `Wine Staging.app` ha le librerie di sistema
+    /// ma non le due patch. Le due cose sono fatti separati, mai un solo
+    /// “usable”: un host senza librerie è usabile **per il gioco**.
+    public struct HostCapabilities: Sendable, Equatable {
+        /// `ntdll.so` porta `WINEDLLPATH_PREPEND` (patch CodeWeavers).
+        public let hasDllPathPrepend: Bool
+        /// `winemac.so` esporta `macdrv_functions` (patch CodeWeavers).
+        public let hasMacdrvBridge: Bool
+        /// Sottoinsieme di `requiredLibraries` trovate sull'host.
+        public let systemLibraries: [String]
+
+        /// Le due patch: la condizione per caricare i moduli dxmf.
+        public var canLoadDXMFModules: Bool { hasDllPathPrepend && hasMacdrvBridge }
+
+        /// Le due patch **e** le tre librerie di sistema: la condizione per
+        /// tenere viva la UI di Steam sullo stesso host.
+        public var canHostSteam: Bool {
+            canLoadDXMFModules
+                && HostCapabilities.requiredLibraries.allSatisfy(systemLibraries.contains)
+        }
+
+        /// Riga di stato per `gx dxmf status`: dichiara se l'host è
+        /// solo-per-gioco quando le librerie di sistema mancano.
+        public var summary: String {
+            if !canLoadDXMFModules {
+                return "dxmf modules: not loadable (\(missingPatches.joined(separator: "; ")))"
+                    + " — patch the host first"
+            }
+            if canHostSteam {
+                return "dxmf modules: loadable; Steam: hostable"
+                    + " (\(systemLibraries.joined(separator: ", ")))"
+            }
+            let lacking = HostCapabilities.requiredLibraries.filter { !systemLibraries.contains($0) }
+            return "dxmf modules: loadable; Steam: not hostable here"
+                + " (missing \(lacking.joined(separator: ", "))) — usable for the game only"
+        }
+
+        /// Perché i moduli dxmf non si caricano (nil se si caricano). Nomina
+        /// la patch mancante e il rimedio: mai un rifiuto muto.
+        public var refusal: String? {
+            guard !canLoadDXMFModules else { return nil }
+            return "host Wine cannot load dxmf modules: \(missingPatches.joined(separator: "; ")). "
+                + "A complete + patched host comes from `gx runtime install --from-source` "
+                + "(Wine \(DXMF.pinnedWineVersion) + the 3 CodeWeavers patches + x64deps)"
+        }
+
+        static let requiredLibraries = ["freetype", "MoltenVK", "gnutls"]
+
+        private var missingPatches: [String] {
+            var missing: [String] = []
+            if !hasDllPathPrepend { missing.append("ntdll.so lacks WINEDLLPATH_PREPEND") }
+            if !hasMacdrvBridge { missing.append("winemac.so lacks macdrv_functions") }
+            return missing
+        }
+    }
+
+    /// Probe **read-only** delle capacità dell'host, senza eseguire Wine
+    /// (`wine --version` può fallire o essere lento): solo `nm`/`strings` sui due
+    /// `.so` e un walk limitato per le librerie di sistema. Gira anche su un host
+    /// che non parte.
+    public static func hostCapabilities(forBinary wineBinary: String) -> HostCapabilities {
+        let binary = URL(fileURLWithPath: (wineBinary as NSString).expandingTildeInPath)
+        // <root>/bin/wine → <root>/lib/wine/x86_64-unix
+        let root = binary.deletingLastPathComponent().deletingLastPathComponent()
+        let unixDir = root.appendingPathComponent("lib/wine/x86_64-unix")
+        let hasDll = containsMarker(unixDir.appendingPathComponent("ntdll.so").path,
+                                    marker: "WINEDLLPATH_PREPEND", viaNm: false)
+        let hasMacdrv = containsMarker(unixDir.appendingPathComponent("winemac.so").path,
+                                       marker: "macdrv_functions", viaNm: true)
+        return HostCapabilities(
+            hasDllPathPrepend: hasDll,
+            hasMacdrvBridge: hasMacdrv,
+            systemLibraries: findSystemLibraries(root: root))
+    }
+
+    /// `nm -gU` (simboli esportati) e, se non basta, `strings`: così il marker si
+    /// trova sia in un `.so` reale (simbolo) sia in un file di test (stringa).
+    /// Mai un comando diverso da `nm`/`strings`.
+    static func containsMarker(_ path: String, marker: String, viaNm: Bool) -> Bool {
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        if viaNm, let result = try? ProcessRunner.run("/usr/bin/nm", ["-gU", path]),
+           result.stdout.split(separator: "\n").contains(where: { $0.contains(marker) }) {
+            return true
+        }
+        guard let result = try? ProcessRunner.run("/usr/bin/strings", [path]) else { return false }
+        return result.stdout.split(separator: "\n").contains(where: { $0.contains(marker) })
+    }
+
+    /// Librerie di sistema cercate sotto l'host (profondità ≤ 4, come il `find
+    /// -maxdepth 4`) **e** in `<root>/lib/external/*` (layout CodeWeavers).
+    /// Ordine canonico, così gli assert sono deterministici.
+    static func findSystemLibraries(root: URL) -> [String] {
+        let mapping: [(prefix: String, name: String)] = [
+            ("libfreetype", "freetype"),
+            ("libMoltenVK", "MoltenVK"),
+            ("libgnutls", "gnutls"),
+        ]
+        var found = Set<String>()
+        let fm = FileManager.default
+        let maxDepth = 4
+        func scan(_ dir: URL, depth: Int) {
+            guard let entries = try? fm.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]) else { return }
+            for entry in entries {
+                let name = entry.lastPathComponent
+                for item in mapping where name.hasPrefix(item.prefix) { found.insert(item.name) }
+                let isDirectory = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                if isDirectory, depth < maxDepth { scan(entry, depth: depth + 1) }
+            }
+        }
+        scan(root, depth: 0)
+        scan(root.appendingPathComponent("lib/external"), depth: 0)
+        return mapping.map { $0.name }.filter { found.contains($0) }
+    }
+
     // MARK: - Costanti
 
     /// La versione dichiarata dai moduli (`DXMF_WINE_PINNED_VERSION`).
@@ -166,7 +294,8 @@ public enum DXMF {
             modules: scanned.modules,
             pinnedVersion: scanned.pinned,
             wineMajor: Runtime.parseMajor(from: wineVersion),
-            pinSource: scanned.pinSource
+            pinSource: scanned.pinSource,
+            hostCapabilities: hostCapabilities(forBinary: wine.path)
         )
     }
 
