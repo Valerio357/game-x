@@ -148,7 +148,8 @@ func runF010Checks(_ h: Harness) {
         h.check(stale.detail.contains("differs"), "STALE detail says it differs")
         let staleReport = DXMFDoctor.run(config: hostConfig)
         let staleCheck = staleReport.checks.first { $0.id == "stage.provenance" }
-        h.equal(staleCheck?.status, .warn, "doctor: stale provenance → WARN")
+        h.equal(staleCheck?.status, .fail,
+                "doctor: stale provenance → FAIL (code ahead of the loaded modules must stop)")
         h.check((staleCheck?.title ?? "").contains("STALE"), "the WARN names STALE")
         h.check((staleCheck?.remedy ?? "").contains("stage-wine-runtime.sh"),
                 "the WARN carries the stage remedy")

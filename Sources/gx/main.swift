@@ -1407,6 +1407,38 @@ func dxmfRunBody(
         throw CLIError.denied(reason)
     }
 
+    // Se il bersaglio e' **Steam**, questo e' un avvio di Steam: applicare lo shim e
+    // i dialog di crash come fa `gx steam run`. Senza, un update di Steam puo' aver
+    // rimpiazzato `steamwebhelper.exe` con il file vero e la UI resta **NERA**
+    // (difetto reale: la ricetta «Steam con `gx dxmf run`» non passava da `Steam.run`).
+    // Attenzione: il bersaglio puo' essere un path **Windows** (`C:\\...\\Steam.exe`).
+    // `NSString.lastPathComponent` spezza solo su `/`, quindi va normalizzato a mano.
+    let targetBase = (command.first ?? "")
+        .split(whereSeparator: { $0 == "/" || $0 == "\\" })
+        .last.map { String($0).lowercased() } ?? ""
+    if targetBase == "steam.exe" {
+        switch Shim.status(in: b).kind {
+        case .shimmed:
+            Out.print(Out.dim("Steam shim: present"))
+        case .real, .ambiguous, .missingExecutable:
+            if flags["dry-run"] != nil {
+                Out.print(Out.yellow("Steam shim: MISSING — a real launch would re-apply it "
+                                     + "(and `gx steam repair \(boxName)` does it now)"))
+            } else {
+                try? Shim.ensureInstalled(in: b, config: config, force: false)
+                Out.print(Shim.status(in: b).isShimmed
+                    ? Out.green("Steam shim: re-applied (Steam had replaced it)")
+                    : Out.red("Steam shim: STILL missing — the CEF UI may stay black; run `gx steam repair \(boxName)`"))
+            }
+        case .missingDirs:
+            Out.print(Out.dim("Steam shim: not applicable (no CEF directory yet)"))
+        }
+        Prefix.disableCrashDialogs(in: b, config: config, runtime: runtime)
+        if !DXMT.monoInstalled(in: b.url) {
+            Out.print(Out.yellow("warning: wine-mono is missing in '\(boxName)': CEF may never paint — see `gx dxmf doctor \(boxName)`"))
+        }
+    }
+
     // Diagnostica: quiet di default; --verbose/--debug la accendono; --frame-log la espone.
     // Un solo posto costruisce le variabili: `DXMF.Diagnostics.defaults`.
     let diagnostics = DXMF.Diagnostics.defaults(

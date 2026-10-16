@@ -159,8 +159,11 @@ public enum DXMFDoctor {
                     detail: provenance.detail))
             case .stale:
                 let names = differing.isEmpty ? "module(s)" : differing.joined(separator: ", ")
+                // FAIL, non WARN: un fix che sta nel CODICE e non nei MODULI CARICATI e'
+                // indistinguibile, per chi guarda lo schermo, da un fix che non esiste
+                // (classe di errore nominata dal CEO, 2026-10-16). Ferma la run.
                 checks.append(.init(
-                    id: "stage.provenance", status: .warn,
+                    id: "stage.provenance", status: .fail,
                     title: "stage provenance — STALE: staged \(names) differs from the build output",
                     detail: provenance.detail,
                     remedy: provenance.remedy))
