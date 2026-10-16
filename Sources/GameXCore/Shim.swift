@@ -89,11 +89,138 @@ public enum Shim {
         return data.range(of: Data(marker.utf8)) != nil
     }
 
-    /// Shimmato su tutte le directory CEF?
-    public static func isInstalled(in prefix: PrefixRecord) -> Bool {
+    // MARK: - Lo stato dello shim, una sola fonte di verita'
+
+    /// Esito della verifica dello shim su tutte le directory CEF.
+    ///
+    /// Casi del contratto:
+    /// - `shimmed`: ogni `steamwebhelper.exe` porta il marker;
+    /// - `real`: e' il file vero (marker assente);
+    /// - `ambiguous`: `steamwebhelper.exe` e `steamwebhelper_real.exe` esistono e
+    ///   sono **identici** ⇒ e' il file vero, non lo shim (caso che inganna un
+    ///   check basato solo sull'esistenza del file);
+    /// - `missingDirs`: nessuna directory CEF (Steam assente o non scompattato);
+    /// - `missingExecutable`: la directory CEF esiste ma manca il webhelper.
+    ///
+    /// Usata **da tutti** i lettori (`gx steam status`, `gx dxmf doctor`): cosi'
+    /// non possono divergere. `Status` porta anche le due dimensioni lette dal
+    /// disco, perche' il messaggio sia verificabile da chi legge.
+    public struct Status: Sendable, Equatable {
+        public enum Kind: String, Sendable, Equatable {
+            case shimmed
+            case real
+            case ambiguous
+            case missingDirs
+            case missingExecutable
+        }
+
+        /// Una directory CEF con le due dimensioni lette davvero dal disco.
+        public struct Entry: Sendable, Equatable {
+            public let directory: URL
+            public let executable: URL
+            public let executableSize: Int?
+            public let executableIsShim: Bool
+            public let real: URL
+            public let realSize: Int?
+            /// `steamwebhelper.exe` e `steamwebhelper_real.exe` sono byte-identici.
+            public let identical: Bool
+        }
+
+        public let kind: Kind
+        public let entries: [Entry]
+
+        public init(kind: Kind, entries: [Entry]) {
+            self.kind = kind
+            self.entries = entries
+        }
+
+        public var isShimmed: Bool { kind == .shimmed }
+
+        /// Dettaglio verificabile: nomina i due file e le **due dimensioni**.
+        public var detail: String {
+            switch kind {
+            case .missingDirs:
+                return "no CEF directory under the prefix"
+            case .shimmed:
+                let n = entries.filter { $0.executableIsShim }.count
+                return "marker '\(Shim.marker)' in \(n) CEF dir(s)"
+            case .ambiguous:
+                return entries.filter { $0.identical }.map { entry in
+                    "\(entry.executable.lastPathComponent) == \(entry.real.lastPathComponent) "
+                        + "(\(Status.sizeText(entry.executableSize)) each) — "
+                        + "this is the real helper, not the shim"
+                }.joined(separator: "; ")
+            case .real:
+                return entries.map { entry in
+                    "\(entry.directory.lastPathComponent): \(entry.executable.lastPathComponent) "
+                        + "\(Status.sizeText(entry.executableSize))"
+                        + (entry.realSize.map { ", \($0) B real" } ?? "")
+                        + " — no marker"
+                }.joined(separator: "; ")
+            case .missingExecutable:
+                return entries.map { entry in
+                    "\(entry.directory.lastPathComponent): \(entry.executable.lastPathComponent) missing"
+                }.joined(separator: "; ")
+            }
+        }
+
+        public static func sizeText(_ size: Int?) -> String {
+            guard let size else { return "?" }
+            return ByteFormat.human(Int64(size))
+        }
+    }
+
+    /// Stato dello shim: **una sola** funzione per doctor, `steam status` e
+    /// `prefix info`. Riconosce il marker per contenuto; quando i due file
+    /// esistono e hanno lo stesso contenuto lo dichiara (`ambiguous`), cosi' un
+    /// file vero non viene mai scambiato per shim.
+    public static func status(in prefix: PrefixRecord) -> Status {
+        let fm = FileManager.default
         let dirs = cefDirectories(in: prefix)
-        guard !dirs.isEmpty else { return false }
-        return dirs.allSatisfy { isShim($0.appendingPathComponent("steamwebhelper.exe")) }
+        guard !dirs.isEmpty else { return Status(kind: .missingDirs, entries: []) }
+
+        var entries: [Status.Entry] = []
+        var kinds: [Status.Kind] = []
+        for dir in dirs {
+            let exe = dir.appendingPathComponent("steamwebhelper.exe")
+            let real = dir.appendingPathComponent("steamwebhelper_real.exe")
+            let exeSize = size(of: exe)
+            let realSize = size(of: real)
+            let exeIsShim = exeSize != nil && isShim(exe)
+            let identical: Bool
+            if exeSize != nil, realSize != nil, !exeIsShim,
+               fm.contentsEqual(atPath: exe.path, andPath: real.path) {
+                identical = true
+            } else {
+                identical = false
+            }
+            entries.append(Status.Entry(
+                directory: dir, executable: exe, executableSize: exeSize,
+                executableIsShim: exeIsShim, real: real, realSize: realSize,
+                identical: identical))
+            if exeIsShim { kinds.append(.shimmed) }
+            else if identical { kinds.append(.ambiguous) }
+            else if exeSize != nil { kinds.append(.real) }
+            else { kinds.append(.missingExecutable) }
+        }
+
+        let kind: Status.Kind
+        if kinds.allSatisfy({ $0 == .shimmed }) { kind = .shimmed }
+        else if kinds.contains(.ambiguous) { kind = .ambiguous }
+        else if kinds.contains(.real) { kind = .real }
+        else if kinds.contains(.missingExecutable) { kind = .missingExecutable }
+        else { kind = .real }
+        return Status(kind: kind, entries: entries)
+    }
+
+    private static func size(of url: URL) -> Int? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int
+    }
+
+    /// Shimmato su tutte le directory CEF? Delega a `status(in:)`: nessuna
+    /// seconda logica di verifica puo' divergere da questa.
+    public static func isInstalled(in prefix: PrefixRecord) -> Bool {
+        status(in: prefix).isShimmed
     }
 
     /// Rimuove un eventuale lock `uchg` lasciato dalle versioni precedenti.

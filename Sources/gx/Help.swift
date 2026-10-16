@@ -61,13 +61,16 @@ enum Help {
                                                 (exit 0 only if the modules load)
           gx dxmf modules [box]                 each module's PE and unix path + sha256
                                                 (content proof for lsof)
-          gx dxmf doctor [box]                  one line per check ([ OK ]/[WARN]/[FAIL]) and
-                                                what to do: runtime/pin, modules, host
-                                                capabilities, x64deps, the PREFIX dependencies
-                                                (Steam+shim, wine-mono, dxvk overrides in
-                                                user.reg, d3dcompiler_47/vcrun2022), lock and
-                                                winedbg orphans. Exit 0 only with no FAIL;
-                                                without <box> checks the global parts only
+          gx dxmf doctor [box]                  one line per check ([ OK ]/[WARN]/[FAIL]/[ ? ]) and
+                                                what to do: runtime/pin, modules + stage
+                                                provenance (content vs the build output),
+                                                host capabilities, x64deps, the PREFIX
+                                                dependencies (Steam+shim, wine-mono, dxvk
+                                                overrides in user.reg, d3dcompiler_47/
+                                                vcrun2022 + corefonts/gdiplus with Steam,
+                                                steam session ssfn*), lock and winedbg
+                                                orphans. Exit 0 only with no FAIL; without
+                                                <box> checks the global parts only
           gx dxmf run <box> [flags] -- <cmd...> launch a game with the dxmf environment:
                                      --appid N          set SteamAppId/SteamGameId
                                      --winedebug SPEC   WINEDEBUG=SPEC (requires a finite log cap)
@@ -90,6 +93,13 @@ enum Help {
         \(Out.bold("STEAM"))
           gx steam status  [box]
           gx steam install [box] [--setup <path>] [--runtime ...] [--force] [--no-update]
+          gx steam adopt   <dest> --from <src> [--force] [--dry-run]
+                                     copy an already-logged-in Steam tree from <src> to <dest>
+                                     with cp -a, then apply the shim and the CEF dependencies
+                                     (corefonts gdiplus d3dcompiler_47 vcrun2022 dxvk dxvk1103).
+                                     The copy carries the FILES, not the session: without ssfn*/
+                                     login Steam stays WaitingForCredentials, so a human login
+                                     is needed once per copied box.
           gx steam repair  [box] [--runtime ...]
           gx steam run     [box]
           gx steam launch  <box> <appid> [--exe <path>] [--no-warmup]

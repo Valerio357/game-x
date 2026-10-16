@@ -656,4 +656,7 @@ runLockScopeChecks(h)
 // prefix, lock, orfani).
 runDXMFDoctorChecks(h)
 
+// F010: shim (identici ≠ shim), provenienza dello stage, sessione Steam.
+runF010Checks(h)
+
 exit(h.finish())

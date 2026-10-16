@@ -973,7 +973,7 @@ func cmdDeps(_ args: [String]) {
 
 func cmdSteam(_ args: [String]) {
     let (config, paths) = loadContext()
-    guard let sub = args.first else { fail(.usage("usage: gx steam <status|install|repair|run|stop|launch>")) }
+    guard let sub = args.first else { fail(.usage("usage: gx steam <status|install|adopt|repair|run|stop|launch>")) }
     let (pos, flags) = splitArgs(Array(args.dropFirst()))
 
     func boxName(_ index: Int = 0) -> String {
@@ -989,8 +989,12 @@ func cmdSteam(_ args: [String]) {
             Out.print("\(name): " + Out.yellow("Steam not installed"))
         case .installed(let shim):
             Out.print("\(name): Steam installed")
-            Out.field("shim", shim ? Out.green("yes") : Out.red("no"))
-            if !shim { Out.print(Out.dim("   repair with: gx steam repair \(name)")) }
+            if shim.isShimmed {
+                Out.field("shim", Out.green("yes") + Out.dim(" — \(shim.detail)"))
+            } else {
+                Out.field("shim", Out.red("no") + Out.dim(" — \(shim.detail)"))
+                Out.print(Out.dim("   repair with: gx steam repair \(name)"))
+            }
         }
 
     case "install":
@@ -1031,6 +1035,61 @@ func cmdSteam(_ args: [String]) {
                 let message = try Steam.repair(prefix: b, config: safe, runtime: rt,
                                                force: flags["no-rebuild"] == nil)
                 Out.print(Out.green(message))
+            }
+        } catch { fail(.denied("\(error)")) }
+
+    case "adopt":
+        guard let destName = pos.first else {
+            fail(.usage("usage: gx steam adopt <dest> --from <src> [--force] [--dry-run]"))
+        }
+        guard let fromName = flags["from"] else {
+            fail(.usage("gx steam adopt <dest> --from <src>: --from is required"))
+        }
+        let dest = requirePrefix(destName, paths)
+        guard let source = Prefix.find(fromName, paths: paths) else {
+            fail(.prefixNotFound("source box '\(fromName)' not found in \(paths.prefixRoot.path)"))
+        }
+        let rt = runtimeForPrefix(dest, config: config, override: flags["runtime"])
+        let dryRun = flags["dry-run"] != nil
+        // La stessa guardia della copia: la dest non deve essere in uso.
+        guardDestructive(destName, paths: paths, flags: flags, action: "adopt Steam into")
+        do {
+            try withBoxLock(destName, config, command: "gx steam adopt \(destName)",
+                            reason: "steam adopt", flags: flags) {
+                let safe = libraryConfig(config)
+                let report = try Steam.adopt(
+                    dest: dest, source: source, config: safe, runtime: rt,
+                    force: flags["force"] != nil, dryRun: dryRun,
+                    progress: { Out.print("  \($0)") })
+                if report.copied {
+                    Out.print(Out.green(String(format: "Steam adopted into '%@' (%.1f s)",
+                                               destName, report.seconds)))
+                } else {
+                    Out.print(Out.bold("dry-run complete — nothing was copied"))
+                }
+                Out.print(Out.dim("   session files in the copied box: "
+                    + (report.sessionPresent ? "ssfn* present" : "none (ssfn* absent)")))
+                Out.print(Out.yellow("   login: the copy carries the FILES, not the session: without "
+                    + "ssfn*/login Steam stays WaitingForCredentials — a human login is needed "
+                    + "once per copied box"))
+                if !dryRun {
+                    Out.print(Out.dim("   checks after the copy:"))
+                    let doctor = DXMFDoctor.run(config: config, box: destName)
+                    for check in doctor.checks where check.status != .ok {
+                        let tag: String
+                        switch check.status {
+                        case .ok: tag = Out.green("[ OK ]")
+                        case .warn: tag = Out.yellow("[WARN]")
+                        case .fail: tag = Out.red("[FAIL]")
+                        case .unknown: tag = Out.yellow("[ ? ]")
+                        }
+                        var line = "     \(tag) \(check.title)"
+                        if let detail = check.detail { line += Out.dim(" — \(detail)") }
+                        Out.print(line)
+                        if let remedy = check.remedy { Out.print(Out.dim("            → \(remedy)")) }
+                    }
+                    if !doctor.hasFailures { Out.print(Out.green("     nothing left to fix")) }
+                }
             }
         } catch { fail(.denied("\(error)")) }
 
@@ -1178,6 +1237,8 @@ func cmdDXMFStatus(_ args: [String]) {
     Out.field("wine version", info.wineVersion)
     Out.field("stage", info.stageRoot.path)
     Out.field("modules", info.modules.joined(separator: ","))
+    let provenance = StageProvenance.inspect(stageRoot: info.stageRoot)
+    Out.field("stage provenance", "\(provenance.status.rawValue) — \(provenance.detail)")
     let pin = info.pinnedVersion ?? DXMF.pinnedWineVersion
     Out.field("pin", pin + (info.pinSource.map { " (from \($0))" } ?? " (default)"))
     Out.field("capabilities", info.hostCapabilities.summary)
@@ -1257,6 +1318,7 @@ func cmdDXMFDoctor(_ args: [String]) {
         case .ok: tag = Out.green("[ OK ]")
         case .warn: tag = Out.yellow("[WARN]")
         case .fail: tag = Out.red("[FAIL]")
+        case .unknown: tag = Out.yellow("[ ? ]")
         }
         var line = "  \(tag) \(check.title)"
         if let detail = check.detail { line += Out.dim(" — \(detail)") }
@@ -1267,7 +1329,8 @@ func cmdDXMFDoctor(_ args: [String]) {
     }
     let counts = report.counts
     Out.print()
-    Out.print(Out.dim("  \(counts.ok) ok, \(counts.warn) warn, \(counts.fail) fail"))
+    Out.print(Out.dim("  \(counts.ok) ok, \(counts.warn) warn, \(counts.fail) fail"
+        + (counts.unknown > 0 ? ", \(counts.unknown) unknown" : "")))
     exit(report.hasFailures ? ExitCode.generic.rawValue : ExitCode.ok.rawValue)
 }
 

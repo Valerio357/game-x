@@ -15,6 +15,8 @@ public enum DXMFDoctor {
         case ok = "OK"
         case warn = "WARN"
         case fail = "FAIL"
+        /// Dato assente: dichiarato, mai confuso con OK (es. provenienza).
+        case unknown = "?"
     }
 
     public struct Check: Codable, Sendable {
@@ -41,15 +43,21 @@ public enum DXMFDoctor {
         public init(checks: [Check]) { self.checks = checks }
 
         public var hasFailures: Bool { checks.contains { $0.status == .fail } }
-        public var counts: (ok: Int, warn: Int, fail: Int) {
+        public var counts: (ok: Int, warn: Int, fail: Int, unknown: Int) {
             (checks.filter { $0.status == .ok }.count,
              checks.filter { $0.status == .warn }.count,
-             checks.filter { $0.status == .fail }.count)
+             checks.filter { $0.status == .fail }.count,
+             checks.filter { $0.status == .unknown }.count)
         }
     }
 
-    /// I due verb winetricks essenziali per Steam (`DEC-137`).
+    /// I due verb storici per Steam (`DEC-137`).
     public static let requiredVerbs = ["d3dcompiler_47", "vcrun2022"]
+
+    /// Verb del **testo** della UI: senza `corefonts` i glifi non ci sono e la
+    /// UI non si legge. Richiesti quando la box ha Steam (misurato: `corefonts`
+    /// ASSENTE in `dxmf-run`).
+    public static let steamTextVerbs = ["corefonts", "gdiplus"]
 
     /// `box == nil` ⇒ solo le parti globali (1-4, 7) e lo dichiara.
     public static func run(config: Config, box: String? = nil) -> Report {
@@ -134,6 +142,35 @@ public enum DXMFDoctor {
                 id: "modules", status: .fail,
                 title: "modules present — cannot check without a host",
                 remedy: "install the dxmf runtime first"))
+        }
+
+        // 2-bis) Provenienza dello stage: confronto per **contenuto** con l'output
+        // della build corrente del repo dxmf. Un output assente e' UNKNOWN, mai OK.
+        if let info {
+            let provenance = StageProvenance.inspect(stageRoot: info.stageRoot)
+            let differing = Set(provenance.modules
+                .filter { !$0.buildMissing && !$0.matches }
+                .map { $0.module }).sorted()
+            switch provenance.status {
+            case .ok:
+                checks.append(.init(
+                    id: "stage.provenance", status: .ok,
+                    title: "stage provenance — modules match the current build output",
+                    detail: provenance.detail))
+            case .stale:
+                let names = differing.isEmpty ? "module(s)" : differing.joined(separator: ", ")
+                checks.append(.init(
+                    id: "stage.provenance", status: .warn,
+                    title: "stage provenance — STALE: staged \(names) differs from the build output",
+                    detail: provenance.detail,
+                    remedy: provenance.remedy))
+            case .unknown:
+                checks.append(.init(
+                    id: "stage.provenance", status: .unknown,
+                    title: "stage provenance — UNKNOWN (no build output to compare)",
+                    detail: provenance.detail,
+                    remedy: provenance.remedy))
+            }
         }
 
         // 3) Capacità dell'host: le 2 patch CodeWeavers + librerie di sistema,
@@ -282,18 +319,32 @@ public enum DXMFDoctor {
     /// Il punto che avrebbe evitato la **box nera**: Steam presente + shim,
     /// wine-mono, override dxvk nel registry, verb winetricks essenziali.
     static func appendPrefixChecks(_ checks: inout [Check], record: PrefixRecord, box: String) {
-        let depsRemedy = "gx deps install \(box) dxvk dxvk1103 d3dcompiler_47 vcrun2022"
+        // Dipendenze del **testo**: `corefonts`/`gdiplus` servono quando c'e'
+        // Steam (i glifi della UI). Per il gioco dxmf bastano le due storiche.
+        let required = record.hasSteam ? requiredVerbs + steamTextVerbs : requiredVerbs
+        let depsRemedy = "gx deps install \(box) "
+            + (["dxvk", "dxvk1103"] + required).joined(separator: " ")
 
-        // Steam + shim (bug #60263: senza shim la UI si pianta).
+        // Steam + shim (bug #60263: senza shim la UI si pianta). La verifica e'
+        // `Shim.status`, la stessa di `gx steam status`: non possono divergere.
         if record.hasSteam {
-            if Shim.isInstalled(in: record) {
+            let shim = Shim.status(in: record)
+            switch shim.kind {
+            case .shimmed:
                 checks.append(.init(id: "prefix.steam", status: .ok,
-                                    title: "prefix Steam — installed, shim present"))
-            } else {
+                                    title: "prefix Steam — installed, shim present",
+                                    detail: shim.detail))
+            case .ambiguous:
+                checks.append(.init(
+                    id: "prefix.steam", status: .fail,
+                    title: "prefix Steam — steamwebhelper.exe and steamwebhelper_real.exe are IDENTICAL",
+                    detail: shim.detail + " (Wine bug #60263: no shim ⇒ the UI will hang)",
+                    remedy: "gx steam repair \(box)"))
+            case .real, .missingExecutable, .missingDirs:
                 checks.append(.init(
                     id: "prefix.steam", status: .fail,
                     title: "prefix Steam — shim missing",
-                    detail: "steamwebhelper is the real one (Wine bug #60263: the UI will hang)",
+                    detail: shim.detail + " (Wine bug #60263: the UI will hang)",
                     remedy: "gx steam repair \(box)"))
             }
         } else {
@@ -302,6 +353,20 @@ public enum DXMFDoctor {
                 title: "prefix Steam — not installed",
                 detail: "fine for a direct dxmf game; install it for a Steam box",
                 remedy: "gx steam install \(box)"))
+        }
+
+        // Sessione Steam: la copia di una box porta i FILE, non la sessione.
+        if record.hasSteam {
+            if Steam.hasSession(in: record) {
+                checks.append(.init(id: "prefix.session", status: .ok,
+                                    title: "prefix steam session — ssfn* present in the Steam root"))
+            } else {
+                checks.append(.init(
+                    id: "prefix.session", status: .warn,
+                    title: "no Steam session in this box — a copied box needs a human login once",
+                    detail: "the copy carries the FILES, not the session: without ssfn*/login "
+                        + "Steam stays WaitingForCredentials"))
+            }
         }
 
         // wine-mono: la UI di Steam / CEF ne ha bisogno.
@@ -359,11 +424,11 @@ public enum DXMFDoctor {
 
         // Verb winetricks essenziali: si usano le sentinelle di `Deps`.
         let detected = Set(Deps.detectBySentinel(in: record))
-        let missingVerbs = requiredVerbs.filter { !detected.contains($0) }
+        let missingVerbs = required.filter { !detected.contains($0) }
         if missingVerbs.isEmpty {
             checks.append(.init(
                 id: "prefix.verbs", status: .ok,
-                title: "prefix winetricks — d3dcompiler_47, vcrun2022 present"))
+                title: "prefix winetricks — \(required.joined(separator: ", ")) present"))
         } else {
             checks.append(.init(
                 id: "prefix.verbs", status: .fail,

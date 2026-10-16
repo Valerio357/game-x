@@ -104,9 +104,12 @@ func runDXMFDoctorChecks(_ h: Harness) {
     }
     try? fm.createDirectory(at: boxURL.appendingPathComponent("drive_c/windows/mono/mono-2.0"),
                             withIntermediateDirectories: true)
-    for verb in DXMFDoctor.requiredVerbs {
+    for verb in DXMFDoctor.requiredVerbs + DXMFDoctor.steamTextVerbs {
         guard let sentinel = Deps.info(for: verb)?.sentinel else { continue }
-        try? Data([0x4d, 0x5a]).write(to: boxURL.appendingPathComponent(sentinel))
+        let url = boxURL.appendingPathComponent(sentinel)
+        try? fm.createDirectory(at: url.deletingLastPathComponent(),
+                                withIntermediateDirectories: true)
+        try? Data([0x4d, 0x5a]).write(to: url)
     }
     let userReg = """
     WINE REGISTRY Version 2

@@ -264,3 +264,55 @@ trasporterebbe l'ambiente al gioco.
 4. i moduli del box (`user.reg`) restano **non toccati**: il rifiuto `0xC0000135` non
    deve comparire;
 5. `gx dxmf status` dichiara host/stage/pin; una coppia incompatibile è **rifiutata**.
+
+## 6. F010 — provenienza dello stage, shim forte, `steam adopt`
+
+### 6.1 Shim: una sola verifica, con le dimensioni
+
+`Shim.status(in:)` e' la **fonte unica** usata da `gx steam status`, `gx dxmf doctor`
+e `prefix info` (`isInstalled` vi delega). Distingue `shimmed`/`real`/`ambiguous`/
+`missingDirs`/`missingExecutable` e porta le **due dimensioni** lette dal disco. Il
+caso pericoloso — `steamwebhelper.exe` e `steamwebhelper_real.exe` **identici** — e'
+dichiarato `ambiguous` con `[FAIL]` e remedy `gx steam repair <box>`: e' il file
+vero, non lo shim (un check basato sull'esistenza del file lo scambierebbe per
+shim).
+
+### 6.2 Provenienza dello stage: classe di errore, non caso
+
+Il check `stage.provenance` confronta **per contenuto** ogni modulo staggiato con
+`<repo>/build/pe/bin/<m>.dll` e `<repo>/build/host/lib/<m>.so`. Uguali ⇒ `[ OK ]`
+con sha256 abbreviati e il percorso; diversi ⇒ `[WARN] STALE` con remedy
+`DXMF_STAGE=<stageParent> bash <repo>/scripts/stage-wine-runtime.sh --renderer <stage>`;
+output di build assente ⇒ `[ ? ] UNKNOWN`, **mai** OK. Riporta sempre la sha del
+repo (`git rev-parse --short HEAD` + quanti file `status --porcelain`). Se accanto
+allo stage esiste un file di provenienza (`<stage>/../dxmf-stage.json`,
+`<repo>/build/game-stage/*.json`) con una sha e/o gli hash, lo **usa**: sha diversa
+da HEAD o hash diversi dal disco ⇒ STALE. La **mtime non decide**: e' solo un
+`detail`.
+
+**Nota di design.** La provenienza *vera* richiede che la build/stage la **scriva**;
+`gx` non la inventa: la legge se c'e' e per il resto confronta per contenuto con
+l'output della build. File proposto per dxmf (una riga):
+
+    <repo>/build/game-stage/dxmf-stage.json
+    {"git":"<sha>","wineVersion":"11.10",
+     "modules":{"d3d11":{"pe_sha256":"…","unix_sha256":"…"},
+                "dxgi":{"pe_sha256":"…","unix_sha256":"…"}}}
+
+### 6.3 `gx steam adopt <dest> --from <src>`
+
+Copia l'albero Steam con `/bin/cp -a` (non file-per-file; misura e stampa i
+secondi), applica subito `Shim.ensureInstalled`, disabilita i dialog di crash e
+installa `corefonts gdiplus d3dcompiler_47 vcrun2022 dxvk dxvk1103` via
+`Deps.install`. Rifiuta dest inesistente, src senza Steam, dest gia' Steam (senza
+`--force`), sorgente in uso; rispetta `BoxLock` e `prefixInUse`. `--dry-run` stampa
+e non fa. Alla fine esegue gli stessi check del doctor e dice cosa manca. La copia
+porta i **FILE**, non la sessione: senza `ssfn*`/login Steam resta
+`WaitingForCredentials`, quindi **serve un login umano, una volta per box copiata**.
+
+### 6.4 Dipendenze del testo e sessione
+
+`prefix.verbs` richiede `corefonts`+`gdiplus` quando la box ha Steam (senza
+`corefonts` la UI e' senza glifi). `prefix.session` e' un `[WARN]`
+(`no Steam session in this box — a copied box needs a human login once`) quando
+mancano `ssfn*`, mai un `FAIL`.

@@ -77,7 +77,7 @@ final class AppModel: ObservableObject {
                 case .notInstalled:
                     badges[b.name] = SteamBadge(installed: false, shim: false)
                 case .installed(let shim):
-                    badges[b.name] = SteamBadge(installed: true, shim: shim)
+                    badges[b.name] = SteamBadge(installed: true, shim: shim.isShimmed)
                 }
             }
 

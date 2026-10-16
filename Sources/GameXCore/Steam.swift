@@ -10,7 +10,7 @@ public enum Steam {
 
     public enum Status: Sendable {
         case notInstalled
-        case installed(shimInstalled: Bool)
+        case installed(shim: Shim.Status)
     }
 
     public enum SteamError: Error, CustomStringConvertible {
@@ -45,7 +45,18 @@ public enum Steam {
 
     public static func status(in prefix: PrefixRecord) -> Status {
         guard prefix.hasSteam else { return .notInstalled }
-        return .installed(shimInstalled: Shim.isInstalled(in: prefix))
+        return .installed(shim: Shim.status(in: prefix))
+    }
+
+    /// La sessione Steam vive nei file `ssfn*` del root Steam. Una box **copiata**
+    /// porta i **file**, non la sessione: senza questi Steam resta
+    /// `WaitingForCredentials` e serve un login umano (una volta per box).
+    public static func hasSession(in prefix: PrefixRecord) -> Bool {
+        let root = prefix.driveC.appendingPathComponent("Program Files (x86)/Steam")
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root.path) else {
+            return false
+        }
+        return entries.contains { $0.hasPrefix("ssfn") }
     }
 
     // MARK: - Environment (Steam never carries the dxmf contract)
@@ -241,6 +252,120 @@ public enum Steam {
         try Shim.ensureInstalled(in: prefix, config: config, force: force)
         Prefix.updateMetaKind(prefix, kind: .steam, runtime: runtime)
         return "shim steamwebhelper reinstallato e protetto"
+    }
+
+    // MARK: - Adopt (copia di un albero Steam gia' loggato)
+
+    /// I verb del CEF/UI di Steam: testo (`corefonts`, `gdiplus`), runtime
+    /// (`vcrun2022`), shader compiler (`d3dcompiler_47`) e dxvk (la UI compone
+    /// in D3D11 via dxvk, `DEC-137`). Servono **anche** se manca solo `corefonts`.
+    public static let cefVerbs = ["corefonts", "gdiplus", "d3dcompiler_47",
+                                  "vcrun2022", "dxvk", "dxvk1103"]
+
+    public enum AdoptError: Error, CustomStringConvertible {
+        case destMissing(String)
+        case sourceNoSteam(String)
+        case destHasSteam(String)
+        case sourceInUse(String)
+        case copyFailed(Int32)
+
+        public var description: String {
+            switch self {
+            case .destMissing(let p):
+                return "destination box does not exist: \(p) (create it first with `gx box create`)"
+            case .sourceNoSteam(let n):
+                return "source box '\(n)' has no Steam to copy (no Steam.exe)"
+            case .destHasSteam(let n):
+                return "destination box '\(n)' already has Steam; pass --force to replace it"
+            case .sourceInUse(let detail):
+                return "source box is in use, refusing to copy a live prefix: \(detail); "
+                    + "stop it first or pass --force"
+            case .copyFailed(let code):
+                return "cp -a failed with exit \(code)"
+            }
+        }
+    }
+
+    public struct AdoptReport: Sendable {
+        public let copied: Bool
+        public let seconds: Double
+        public let source: String
+        public let dest: String
+        public let shim: Shim.Status?
+        public let dependencyCode: Int32
+        public let sessionPresent: Bool
+        public let dryRun: Bool
+    }
+
+    /// `gx steam adopt <dest> --from <src>`: copia l'albero Steam di una box
+    /// gia' loggata e applica **subito** shim e dipendenze del CEF.
+    ///
+    /// La copia e' un `cp -a` dell'albero (non un file-per-file in Swift): su
+    /// APFS e' rapido. La copia porta i **file**, non la sessione: senza `ssfn*`
+    /// Steam resta `WaitingForCredentials` e serve un login umano, **una volta
+    /// per box copiata**. Mai dichiarare che il login e' stato adottato.
+    @discardableResult
+    public static func adopt(
+        dest: PrefixRecord,
+        source: PrefixRecord,
+        config: Config,
+        runtime: ResolvedRuntime,
+        force: Bool = false,
+        dryRun: Bool = false,
+        progress: (String) -> Void = { _ in }
+    ) throws -> AdoptReport {
+        try Prefix.refuseIfLocked(box: dest.name, config: config)
+        guard dest.isInitialized else { throw AdoptError.destMissing(dest.url.path) }
+        guard source.hasSteam else { throw AdoptError.sourceNoSteam(source.name) }
+
+        let fm = FileManager.default
+        let srcSteam = source.driveC.appendingPathComponent("Program Files (x86)/Steam")
+        let parent = dest.driveC.appendingPathComponent("Program Files (x86)")
+        let destSteam = parent.appendingPathComponent("Steam")
+
+        if dest.hasSteam, !force { throw AdoptError.destHasSteam(dest.name) }
+        if fm.fileExists(atPath: destSteam.path), !force {
+            throw AdoptError.destHasSteam(dest.name)
+        }
+        // La guardia esistente: copiare un prefix con un wineserver vivo e' insicuro.
+        let use = BoxLock.prefixInUse(prefix: source.url)
+        if use.inUse, !force { throw AdoptError.sourceInUse("\(source.name): \(use.description)") }
+
+        if dryRun {
+            progress("dry-run: /bin/cp -a \(srcSteam.path) \(destSteam.path)")
+            progress("dry-run: shim + crash-dialog off in \(dest.name)")
+            progress("dry-run: winetricks \(Deps.command(verbs: cefVerbs).joined(separator: " "))")
+            return AdoptReport(
+                copied: false, seconds: 0, source: source.name, dest: dest.name,
+                shim: nil, dependencyCode: 0,
+                sessionPresent: hasSession(in: source), dryRun: true)
+        }
+
+        // 1) Copia dell'albero Steam con `cp -a` (misura e dichiara i secondi).
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        if fm.fileExists(atPath: destSteam.path) { try? fm.removeItem(at: destSteam) }
+        progress("copying \(srcSteam.path) → \(destSteam.path) with cp -a…")
+        let started = Date()
+        let copy = try ProcessRunner.run("/bin/cp", ["-a", srcSteam.path, destSteam.path])
+        guard copy.success else { throw AdoptError.copyFailed(copy.exitCode) }
+        let seconds = Date().timeIntervalSince(started)
+        progress(String(format: "copied in %.1f s", seconds))
+
+        // 2) Shim subito, e niente dialog di crash.
+        progress("applying the steamwebhelper shim…")
+        try Shim.ensureInstalled(in: dest, config: config, force: true)
+        Prefix.disableCrashDialogs(in: dest, config: config, runtime: runtime)
+
+        // 3) Dipendenze del CEF (anche se manca solo corefonts).
+        progress("installing CEF dependencies: \(cefVerbs.joined(separator: " "))…")
+        let dependencyCode = try Deps.install(verbs: cefVerbs, prefix: dest,
+                                              config: config, runtime: runtime)
+        Prefix.updateMetaKind(dest, kind: .steam, runtime: runtime)
+
+        return AdoptReport(
+            copied: true, seconds: seconds, source: source.name, dest: dest.name,
+            shim: Shim.status(in: dest), dependencyCode: dependencyCode,
+            sessionPresent: hasSession(in: dest), dryRun: false)
     }
 
     /// Trova o scarica SteamSetup.exe.
